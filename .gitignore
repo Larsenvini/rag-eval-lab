@@ -1,0 +1,27 @@
+# Env
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Data
+data/processed/
+data/raw/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Eval outputs
+evals/results/*.csv
+evals/results/*.json
+
+# Misc
+*.log
+.pytest_cache/
+.ruff_cache/
