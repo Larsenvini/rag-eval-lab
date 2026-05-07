@@ -17,9 +17,10 @@ data/raw/
 .DS_Store
 Thumbs.db
 
-# Eval outputs
+# Eval outputs — keep only the locked baseline
 evals/results/*.csv
 evals/results/*.json
+!evals/results/baseline.json
 
 # Misc
 *.log
