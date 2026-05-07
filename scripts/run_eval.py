@@ -33,6 +33,10 @@ def main() -> int:
     parser.add_argument("--input", default=str(GOLDEN_SET_PATH), help="Golden set JSON path")
     parser.add_argument("--topic", help="Filter by topic")
     parser.add_argument("--type", dest="qtype", help="Filter by question type")
+    parser.add_argument("--top-k", type=int, default=None,
+                        help="Override config top_k for this run only")
+    parser.add_argument("--note", default="",
+                        help="Short label for this run (e.g. 'top_k=8') — saved into the result JSON")
     args = parser.parse_args()
 
     console = Console()
@@ -63,8 +67,10 @@ def main() -> int:
         console.print("[yellow]No questions match the given filter.[/yellow]")
         return 0
 
+    effective_top_k = args.top_k or cfg.top_k
     console.print(f"[cyan]Running {len(questions)} question(s) through RAG pipeline…[/cyan]")
-    console.print(f"  model={cfg.generation_model}  top_k={cfg.top_k}  temp={cfg.temperature}")
+    console.print(f"  model={cfg.generation_model}  top_k={effective_top_k}  temp={cfg.temperature}"
+                  + (f"  note='{args.note}'" if args.note else ""))
 
     retriever = Retriever()
     generator = Generator()
@@ -72,7 +78,7 @@ def main() -> int:
 
     for q in track(questions, description="Querying RAG…"):
         start = time.perf_counter()
-        hits = retriever.retrieve(q["question"])
+        hits = retriever.retrieve(q["question"], k=args.top_k)
         answer = generator.generate(q["question"], hits)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
 
@@ -100,13 +106,14 @@ def main() -> int:
                 "run_id": run_id,
                 "timestamp": datetime.now().isoformat(),
                 "config": {
-                    "top_k": cfg.top_k,
+                    "top_k": effective_top_k,
                     "generation_model": cfg.generation_model,
                     "embedding_model": cfg.embedding_model,
                     "chunk_size": cfg.chunk_size,
                     "chunk_overlap": cfg.chunk_overlap,
                     "temperature": cfg.temperature,
                 },
+                "note": args.note,
                 "results": results,
             },
             indent=2,
