@@ -1,0 +1,49 @@
+{
+  "_meta": {
+    "purpose": "Quality gates for the RAG eval suite. The CI workflow runs the full eval and asserts every threshold here. If any check fails, the build is red.",
+    "set_on": "2026-05-11",
+    "set_versus": "evals/results/baseline.json (top_k=5, dense) — the locked Week 2 reference",
+    "current_working_point": "hybrid retrieval (BM25+vector+RRF), top_k=12",
+    "rationale": "Thresholds are set just under the current working point's measured values, leaving room for judge noise (~±0.02 on aggregates). Tightening these is part of normal iteration; loosening them requires an explicit 'why' note in this file."
+  },
+
+  "aggregate": {
+    "faithfulness": {
+      "min": 0.83,
+      "note": "Working point ~0.88. 0.83 catches catastrophic drift; 0.85 is the long-term target."
+    },
+    "answer_relevance": {
+      "min": 0.80,
+      "note": "Working point ~0.85."
+    },
+    "ground_truth_similarity": {
+      "min": 0.65,
+      "note": "Working point ~0.72. GT-similarity is the noisiest metric (judge phrasing-sensitive); threshold is generous on purpose."
+    }
+  },
+
+  "failure_modes": {
+    "retrieval_miss_max": {
+      "value": 9,
+      "note": "Working point: 6. Baseline was 10. Floor of 9 means we're not allowed to regress to baseline behavior."
+    },
+    "none_min": {
+      "value": 7,
+      "note": "Working point: 8 clean answers. Floor of 7 means we keep at least most of the wins."
+    }
+  },
+
+  "canaries": {
+    "_note": "These three questions scored 0.00 across all metrics in baseline. They are now fixed by hybrid retrieval. If any of them ever returns to 0.00 on relevance, something fundamental has regressed in retrieval — the build should fail immediately, regardless of aggregate scores.",
+    "questions": [
+      {"id": "Q06", "min_relevance": 0.40},
+      {"id": "Q20", "min_relevance": 0.50},
+      {"id": "Q25", "min_relevance": 0.40}
+    ]
+  },
+
+  "regression": {
+    "_note": "In addition to absolute thresholds, no aggregate may regress more than this amount from the previous scored run committed to evals/results/last_main.json. Catches gradual drift even when absolute floors are still met.",
+    "max_drop_per_metric": 0.05
+  }
+}

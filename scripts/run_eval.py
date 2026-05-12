@@ -22,7 +22,7 @@ from rich.progress import track
 
 from src.config import assert_ready, cfg
 from src.generator import Generator
-from src.retriever import Retriever
+from src.hybrid_retriever import build_retriever
 
 GOLDEN_SET_PATH = Path("evals/golden_set.json")
 RESULTS_DIR = Path("evals/results")
@@ -37,6 +37,12 @@ def main() -> int:
                         help="Override config top_k for this run only")
     parser.add_argument("--note", default="",
                         help="Short label for this run (e.g. 'top_k=8') — saved into the result JSON")
+    parser.add_argument(
+        "--retriever",
+        choices=["dense", "hybrid", "hybrid+rerank", "hybrid+rerank-large"],
+        default=cfg.default_retriever,
+        help="Retriever to use (default: %(default)s)",
+    )
     args = parser.parse_args()
 
     console = Console()
@@ -72,7 +78,7 @@ def main() -> int:
     console.print(f"  model={cfg.generation_model}  top_k={effective_top_k}  temp={cfg.temperature}"
                   + (f"  note='{args.note}'" if args.note else ""))
 
-    retriever = Retriever()
+    retriever = build_retriever(args.retriever)
     generator = Generator()
     results: list[dict] = []
 
@@ -106,6 +112,7 @@ def main() -> int:
                 "run_id": run_id,
                 "timestamp": datetime.now().isoformat(),
                 "config": {
+                    "retriever": args.retriever,
                     "top_k": effective_top_k,
                     "generation_model": cfg.generation_model,
                     "embedding_model": cfg.embedding_model,

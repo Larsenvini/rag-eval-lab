@@ -30,7 +30,8 @@ class Config:
     chunk_overlap: int = int(os.environ.get("CHUNK_OVERLAP", "120"))
 
     # Retrieval
-    top_k: int = int(os.environ.get("TOP_K", "5"))
+    top_k: int = int(os.environ.get("TOP_K", "12"))
+    default_retriever: str = os.environ.get("DEFAULT_RETRIEVER", "hybrid")
 
     # Generation
     temperature: float = float(os.environ.get("TEMPERATURE", "0.1"))
