@@ -1,0 +1,426 @@
+{
+  "version": "1.0",
+  "questions": [
+    {
+      "id": "Q01",
+      "question": "What does kubectl apply -f deployment.yaml actually do internally?",
+      "topic": "architecture",
+      "type": "how-to",
+      "source": "manual",
+      "ground_truth": "When you run `kubectl apply -f deployment.yaml`, kubectl reads the manifest and sends an HTTP request to the Kubernetes API server. The API server validates the manifest, persists the desired state to etcd, and returns a response. The Deployment controller (inside the controller-manager) detects the new desired state and creates or updates a ReplicaSet, which in turn creates Pods. The scheduler assigns those Pods to Nodes, and the kubelet on each Node pulls the container image and starts the containers. Subsequent `kubectl apply` calls diff the live state against the manifest and only update what changed, making it idempotent and declarative.",
+      "difficulty": "hard",
+      "notes": "Tests full control-plane understanding. Failure mode pre-run: assumes-prior + synthesis-fail",
+      "failure_mode_observed": "assumes-prior + synthesis-fail"
+    },
+    {
+      "id": "Q02",
+      "question": "What are ConfigMaps and Secrets used for in Kubernetes?",
+      "topic": "configmaps-secrets",
+      "type": "definition",
+      "source": "manual",
+      "ground_truth": "ConfigMaps store non-sensitive configuration data as key-value pairs that can be injected into Pods as environment variables, command-line arguments, or mounted as files via a volume. Secrets store sensitive data (passwords, tokens, TLS certificates) in base64-encoded form using the same injection patterns, but with additional access controls restricting which Pods can read them and the option to encrypt them at rest. The main distinction is intent and security treatment: ConfigMaps are for non-sensitive configuration; Secrets are for credentials and sensitive material. Both allow configuration to be decoupled from container images.",
+      "difficulty": "easy",
+      "notes": "Tests basic retrieval. Failure mode pre-run: assumes-prior",
+      "failure_mode_observed": "assumes-prior"
+    },
+    {
+      "id": "Q03",
+      "question": "What is the purpose of kubelet in Kubernetes?",
+      "topic": "architecture",
+      "type": "definition",
+      "source": "manual",
+      "ground_truth": "The kubelet is an agent running on every Node that is responsible for managing the Pods assigned to that Node. It watches the API server for Pods scheduled to its Node, then instructs the container runtime (e.g., containerd) to start, stop, or restart the required containers. The kubelet also runs liveness and readiness probes to check container health and reports Pod and Node status back to the control plane. It is the primary bridge between the Kubernetes control plane and the actual containers running on a Node.",
+      "difficulty": "medium",
+      "notes": "Tests architecture retrieval. Failure mode pre-run: synthesis-fail",
+      "failure_mode_observed": "synthesis-fail"
+    },
+    {
+      "id": "Q04",
+      "question": "Cluster has containers inside, containers have pods inside, pods can have their own pods/jobs — did I miss something?",
+      "topic": "pods",
+      "type": "definition",
+      "source": "manual",
+      "ground_truth": "The hierarchy is inverted: Cluster → Nodes → Pods → Containers. Containers are the smallest unit (a single isolated process from an image). Pods wrap one or more tightly coupled containers that share a network namespace (same IP) and optionally storage volumes. Nodes (VMs or physical machines) host multiple Pods. Jobs are not Pods inside Pods — they are a separate top-level resource that creates Pods designed to run to completion and then be deleted, unlike Pods in Deployments which run continuously. Pods themselves do not contain other Pods.",
+      "difficulty": "easy",
+      "notes": "Conceptual hierarchy clarification. Failure mode pre-run: retrieval-miss",
+      "failure_mode_observed": "retrieval-miss"
+    },
+    {
+      "id": "Q05",
+      "question": "How does Kubernetes schedule Pods onto Nodes?",
+      "topic": "scheduling-nodes",
+      "type": "how-to",
+      "source": "manual",
+      "ground_truth": "Kubernetes scheduling is a two-phase process: filtering and scoring. In the filtering phase the scheduler eliminates Nodes that cannot run the Pod — e.g., insufficient CPU or memory, missing required labels, or Nodes tainted in a way the Pod does not tolerate. In the scoring phase the remaining Nodes are ranked by priority functions such as spreading Pods evenly across Nodes. The scheduler picks the highest-scoring Node and writes a binding to the API server. Scheduling behavior can be further controlled with nodeSelector, node affinity/anti-affinity, Pod affinity/anti-affinity, taints and tolerations, and resource requests.",
+      "difficulty": "medium",
+      "notes": "Multi-concept retrieval. Failure mode pre-run: synthesis-fail",
+      "failure_mode_observed": "synthesis-fail"
+    },
+    {
+      "id": "Q06",
+      "question": "If you were deploying a frontend, backend API, and database on Kubernetes, which resources would you use for each part and why?",
+      "topic": "architecture",
+      "type": "why-tradeoff",
+      "source": "manual",
+      "ground_truth": "For the frontend (stateless): a Deployment for easy scaling and rolling updates, exposed via a Service (LoadBalancer or NodePort) and an Ingress for HTTP routing by hostname/path. For the backend API (also stateless): a Deployment with a ClusterIP Service so the frontend can reach it internally without exposing it publicly. For the database (stateful): a StatefulSet instead of a Deployment because databases need stable network identity, ordered startup/shutdown, and durable storage via PersistentVolumeClaims that survive Pod rescheduling. All three components typically share a Namespace and communicate through their respective Services.",
+      "difficulty": "hard",
+      "notes": "Architecture synthesis across multiple resource types. Failure mode pre-run: retrieval-miss + mild synthesis-fail",
+      "failure_mode_observed": "retrieval-miss + synthesis-fail"
+    },
+    {
+      "id": "Q07",
+      "question": "How do I expose a service externally in Kubernetes?",
+      "topic": "services",
+      "type": "how-to",
+      "source": "manual",
+      "ground_truth": "There are three main ways to expose a Kubernetes Service externally. NodePort opens a port on every cluster Node and forwards traffic to the Service — simple but requires knowing Node IPs and is not production-grade on its own. LoadBalancer provisions a cloud provider load balancer with a stable public IP, forwarding traffic to the Service — works automatically on managed clusters (GKE, EKS, AKS). Ingress operates at layer 7 (HTTP/HTTPS) and routes traffic by hostname or URL path to multiple Services behind a single external IP, making it the most flexible and cost-efficient option for HTTP workloads.",
+      "difficulty": "medium",
+      "notes": "Tests multi-option procedural synthesis. Failure mode pre-run: formatting-weak",
+      "failure_mode_observed": "formatting-weak"
+    },
+    {
+      "id": "Q08",
+      "question": "What's the difference between a Deployment and a StatefulSet?",
+      "topic": "deployments",
+      "type": "comparison",
+      "source": "manual",
+      "ground_truth": "A Deployment manages stateless applications where all Pods are interchangeable: Pods receive random names, have no stable network identity, and share no persistent storage by default. A StatefulSet manages stateful applications (databases, message brokers) where each Pod gets a stable, predictable hostname (e.g., db-0, db-1), dedicated PersistentVolumeClaims that survive Pod rescheduling, and ordered graceful startup and shutdown. Choose a Deployment when Pods are fungible and stateless; choose a StatefulSet when each replica needs a unique, persistent identity and durable storage.",
+      "difficulty": "medium",
+      "notes": "Comparison requiring multi-chunk retrieval. Failure mode pre-run: assumes-prior",
+      "failure_mode_observed": "assumes-prior"
+    },
+    {
+      "id": "Q09",
+      "question": "How does a Pod differ from a container?",
+      "topic": "pods",
+      "type": "comparison",
+      "source": "manual",
+      "ground_truth": "A container is a single isolated process running from a container image (e.g., a Docker container). A Pod is the smallest deployable unit in Kubernetes and wraps one or more containers that share the same network namespace (same IP address and ports) and optionally the same storage volumes. All containers in a Pod are co-located on the same Node and scheduled together. The Pod abstraction enables sidecar patterns (helper containers alongside a main container). Pods are ephemeral — when a Pod ends, a new Pod is created by a controller; the original is not restarted in place.",
+      "difficulty": "easy",
+      "notes": "Fundamental concept. Failure mode pre-run: factual-error + formatting-weak",
+      "failure_mode_observed": "factual-error + formatting-weak"
+    },
+    {
+      "id": "Q10",
+      "question": "How do I create my own Kubernetes cluster at home? Why would I use it?",
+      "topic": "out-of-scope",
+      "type": "definition",
+      "source": "manual",
+      "ground_truth": "The official Kubernetes documentation covers concepts and tasks for working with existing clusters and does not provide comprehensive home-lab setup guides. Tools like kubeadm, k3s, minikube, and kind exist for running Kubernetes locally or on bare metal, and minikube or kind are commonly recommended for single-node local development. A home cluster is useful for learning Kubernetes, testing manifests before deploying to a cloud cluster, or running self-hosted services. The official docs assume you already have cluster access; detailed home-lab instructions are primarily in community resources and the documentation of each tool.",
+      "difficulty": "medium",
+      "notes": "Out-of-scope test. Expected: refusal or explicit corpus limitation acknowledgment. Failure mode pre-run: out-of-scope",
+      "failure_mode_observed": "out-of-scope"
+    },
+    {
+      "id": "Q11",
+      "question": "What happens if a Pod crashes inside a Deployment?",
+      "topic": "pods",
+      "type": "edge-case",
+      "source": "manual",
+      "ground_truth": "When a container in a Pod crashes, the kubelet on that Node attempts to restart it according to the Pod's restartPolicy (which defaults to Always for Deployments). If the container keeps crashing, Kubernetes applies exponential back-off (10s, 20s, 40s… up to 5 minutes between attempts) and the Pod enters CrashLoopBackOff. Independently, the Deployment's ReplicaSet controller continuously compares the actual number of running Pods to the desired replica count; if the Pod is evicted or unrecoverable, the ReplicaSet creates a brand-new Pod on another Node to restore the desired count. This desired-state reconciliation loop is the mechanism that makes Deployments self-healing.",
+      "difficulty": "hard",
+      "notes": "Requires ReplicaSet + kubelet restart loop understanding. Failure mode pre-run: retrieval-miss + synthesis-fail",
+      "failure_mode_observed": "retrieval-miss + synthesis-fail"
+    },
+    {
+      "id": "Q12",
+      "question": "How do you create a Pod in Kubernetes using a YAML manifest?",
+      "topic": "pods",
+      "type": "how-to",
+      "source": "synthetic-edited",
+      "ground_truth": "To create a Pod in Kubernetes using a YAML manifest, you need to define a YAML file that specifies the Pod's configuration. The YAML file should include metadata such as the Pod's name and labels, as well as a spec section that defines the containers within the Pod, including their images and ports. Once the YAML file is prepared, you apply it to the Kubernetes cluster using the 'kubectl apply -f <filename>.yaml' command. This will create the Pod as specified in the YAML manifest.",
+      "difficulty": "easy",
+      "notes": "This question is straightforward and tests the user's ability to follow basic procedural steps as outlined in the Kubernetes documentation."
+    },
+    {
+      "id": "Q13",
+      "question": "Why would you use multiple containers in a single Kubernetes pod instead of separate pods for each container?",
+      "topic": "pods",
+      "type": "why-tradeoff",
+      "source": "synthetic-edited",
+      "ground_truth": "Using multiple containers in a single Kubernetes pod is beneficial when the containers have tightly coupled dependencies and need to share resources such as a filesystem. This design pattern, known as the 'sidecar pattern,' allows for efficient communication between containers using shared storage volumes and network namespaces. It is particularly useful when one container complements another, such as a logging or monitoring agent that works alongside a primary application. Keeping them in the same pod ensures they are co-located and share the same lifecycle, which is important for maintaining consistency and reducing network latency.",
+      "difficulty": "medium",
+      "notes": "This question examines the reasoning behind architectural decisions in Kubernetes, testing the ability to understand use-cases for pod configurations."
+    },
+    {
+      "id": "Q14",
+      "question": "What is a deployment in Kubernetes?",
+      "topic": "deployments",
+      "type": "definition",
+      "source": "synthetic-edited",
+      "ground_truth": "A deployment in Kubernetes is a resource that provides declarative updates to applications. It allows users to describe the desired state of application components, and the Deployment Controller changes the actual state to the desired state at a controlled rate. Deployments are used to create, update, and manage instances of applications running on a cluster, ensuring they are correctly configured and available. The deployment object is defined using a YAML or JSON file, which specifies the desired number of replicas, the container image to use, and other configuration details.",
+      "difficulty": "easy",
+      "notes": "This question tests basic retrieval skills by requiring the user to identify a fundamental concept in Kubernetes. It is directly answerable with text from the official documentation."
+    },
+    {
+      "id": "Q15",
+      "question": "How do I update the image of a running deployment in Kubernetes?",
+      "topic": "deployments",
+      "type": "how-to",
+      "source": "synthetic-edited",
+      "ground_truth": "To update the image of a running deployment in Kubernetes, you can use the `kubectl set image` command. First, identify the deployment you want to update with `kubectl get deployments`. Then, execute `kubectl set image deployment/<deployment-name> <container-name>=<new-image>:<tag>`. This command will update the image for the specified container within the deployment. Kubernetes will automatically manage the rolling update, ensuring zero downtime by gradually replacing the old pods with new ones using the updated image.",
+      "difficulty": "medium",
+      "notes": "This question tests the user's understanding of a practical and common task in Kubernetes, requiring knowledge of both the command-line interface and the deployment update mechanics."
+    },
+    {
+      "id": "Q16",
+      "question": "Why would you use a Deployment over a ReplicaSet in Kubernetes?",
+      "topic": "deployments",
+      "type": "why-tradeoff",
+      "source": "synthetic-edited",
+      "ground_truth": "A Deployment offers more advanced features than a ReplicaSet, such as rolling updates, rollbacks, and pausing/resuming updates. Deployments manage ReplicaSets and provide declarative updates, allowing you to easily scale up or down, pause and resume updates, or roll back to a previous version. This makes Deployments a more versatile and robust choice for managing application lifecycle, especially in environments that require frequent updates and high availability.",
+      "difficulty": "medium",
+      "notes": "This question tests the ability to understand and analyze the advantages of using Deployments over ReplicaSets by requiring reasoning about the additional features and use cases of Deployments."
+    },
+    {
+      "id": "Q17",
+      "question": "What happens when a Kubernetes Deployment is missing its replica count specification?",
+      "topic": "deployments",
+      "type": "edge-case",
+      "source": "synthetic-edited",
+      "ground_truth": "When a Kubernetes Deployment is missing its replica count specification, the Deployment controller defaults to creating one replica. This is because the replicas field in a Deployment specification is optional, and if not provided, Kubernetes assumes a default value of 1. As a result, only a single Pod will be created and managed by the Deployment. This behavior ensures that the Deployment still functions, even if the replica count is not explicitly stated.",
+      "difficulty": "medium",
+      "notes": "This question tests understanding of default behaviors in Kubernetes, which are crucial for troubleshooting and ensuring predictable Deployment behavior."
+    },
+    {
+      "id": "Q18",
+      "question": "What is a service in Kubernetes?",
+      "topic": "services",
+      "type": "definition",
+      "source": "synthetic-edited",
+      "ground_truth": "In Kubernetes, a service is an abstraction that defines a logical set of Pods and a policy by which to access them, sometimes called a microservice. Services enable network access to a set of Pods, ensuring that clients can reliably discover and connect to Pods in a dynamic environment where Pods can change IP addresses. By using a service, users can expose Pods to the outside world or other parts of the cluster without needing to manage the Pod IP addresses directly.",
+      "difficulty": "easy",
+      "notes": "This question tests basic retrieval skills and is fundamental to understanding networking within Kubernetes."
+    },
+    {
+      "id": "Q19",
+      "question": "What is the difference between ClusterIP and NodePort services in Kubernetes?",
+      "topic": "services",
+      "type": "comparison",
+      "source": "synthetic-edited",
+      "ground_truth": "ClusterIP and NodePort are two types of Kubernetes services that expose applications. ClusterIP, the default service type, makes the service accessible only within the cluster using an internal IP. NodePort, on the other hand, exposes the service on a static port on each Node's IP, allowing external access to the service. While ClusterIP is suitable for internal communication within the cluster, NodePort is used when external clients need to reach the service.",
+      "difficulty": "medium",
+      "notes": "This question requires understanding and retrieving information about two different service types in Kubernetes, which involves multi-concept retrieval from the documentation."
+    },
+    {
+      "id": "Q20",
+      "question": "Why would you use a ClusterIP service over a NodePort service in Kubernetes?",
+      "topic": "services",
+      "type": "why-tradeoff",
+      "source": "synthetic-edited",
+      "ground_truth": "A ClusterIP service is used when you want to expose a service internally within a Kubernetes cluster. It allows communication between different pods within the cluster without exposing the service to external traffic. This option is typically more secure and efficient for internal communications as it avoids the overhead of routing traffic through a node's IP. On the other hand, a NodePort service exposes the service on each node's IP at a static port, which is necessary if you need external access to the service from outside the cluster. However, this could introduce security risks by exposing services to external networks. Therefore, ClusterIP is preferred for internal-only services, while NodePort is used when external access is required.",
+      "difficulty": "medium",
+      "notes": "This question tests the understanding of when to use different types of Kubernetes services based on access requirements and security considerations."
+    },
+    {
+      "id": "Q21",
+      "question": "What happens when all pods selected by a Kubernetes Service are deleted?",
+      "topic": "services",
+      "type": "edge-case",
+      "source": "synthetic-edited",
+      "ground_truth": "When all pods selected by a Kubernetes Service are deleted, the Service itself remains but it will not have any endpoints to route traffic to. This means that any requests sent to the Service will not reach any pods, effectively resulting in a black hole where traffic is dropped. Kubernetes Services are decoupled from the lifecycle of the pods they route traffic to, so the Service will automatically update its list of endpoints as matching pods are created or deleted. This ensures that once new pods matching the Service's selector are created, they will automatically receive traffic.",
+      "difficulty": "medium",
+      "notes": "This question tests understanding of the relationship between Services and their selected pods, and the dynamic nature of Kubernetes service discovery."
+    },
+    {
+      "id": "Q22",
+      "question": "How do you create and use a ConfigMap to configure an application in Kubernetes?",
+      "topic": "configmaps-secrets",
+      "type": "how-to",
+      "source": "synthetic-edited",
+      "ground_truth": "To create a ConfigMap in Kubernetes, you can use the `kubectl create configmap` command, specifying the desired key-value pairs or file containing the configuration data. For instance, `kubectl create configmap my-config --from-literal=key1=value1 --from-literal=key2=value2` creates a ConfigMap with two key-value pairs. To use this ConfigMap in an application, you can reference it in a Pod specification through environment variables or by mounting it as a volume. In the Pod spec, under `containers`, use the `envFrom` field to refer to the ConfigMap for environment variables, or the `volumeMounts` and `volumes` fields to mount it as a volume.",
+      "difficulty": "medium",
+      "notes": ""
+    },
+    {
+      "id": "Q23",
+      "question": "What is the difference between ConfigMaps and Secrets in Kubernetes?",
+      "topic": "configmaps-secrets",
+      "type": "comparison",
+      "source": "synthetic-edited",
+      "ground_truth": "ConfigMaps and Secrets are both used to store configuration data in Kubernetes, but they serve slightly different purposes. ConfigMaps are used to store non-confidential data as key-value pairs, which can be used in Pods. In contrast, Secrets are specifically designed to store sensitive data such as passwords, OAuth tokens, and SSH keys, and they are encoded in base64. While both can be mounted as volumes or accessed as environment variables, Secrets are designed with enhanced security features, including the ability to use encryption at rest.",
+      "difficulty": "medium",
+      "notes": "This question tests the ability to retrieve and compare information about two similar but distinct resources in Kubernetes, ensuring understanding of their use cases and security implications."
+    },
+    {
+      "id": "Q24",
+      "question": "Why would you use a ConfigMap over a Secret in Kubernetes?",
+      "topic": "configmaps-secrets",
+      "type": "why-tradeoff",
+      "source": "synthetic-edited",
+      "ground_truth": "You would use a ConfigMap over a Secret when you need to store non-sensitive configuration data that does not require encryption. ConfigMaps are suitable for storing configuration settings in plain text, such as environment variables, command-line arguments, or configuration files that do not contain sensitive information. On the other hand, Secrets are used to store sensitive data, such as passwords or API keys, and are encoded in base64 to provide a basic level of security. Choosing ConfigMaps allows for easier management and viewing of non-sensitive configurations without the overhead of encryption.",
+      "difficulty": "medium",
+      "notes": "This question assesses the understanding of when to use ConfigMaps versus Secrets, focusing on reasoning and security considerations."
+    },
+    {
+      "id": "Q25",
+      "question": "What happens if a ConfigMap used by a running Pod is deleted?",
+      "topic": "configmaps-secrets",
+      "type": "edge-case",
+      "source": "synthetic-edited",
+      "ground_truth": "If a ConfigMap used by a running Pod is deleted, the Pod will continue to run without interruption because the data is already loaded into the Pod's memory. However, if the Pod is restarted, it will fail to initialize properly since it won't be able to retrieve the required ConfigMap data. This could lead to application errors or crashes depending on how the application handles missing configuration. To avoid such issues, it's important to ensure that critical ConfigMaps are not deleted while they are still in use.",
+      "difficulty": "medium",
+      "notes": "This question tests understanding of dynamic configuration management in Kubernetes and how Pods interact with ConfigMaps, especially in failure scenarios."
+    },
+    {
+      "id": "Q26",
+      "question": "What is a volume in Kubernetes?",
+      "topic": "storage-volumes",
+      "type": "definition",
+      "source": "synthetic-edited",
+      "ground_truth": "In Kubernetes, a volume is a directory, possibly with some data in it, which is accessible to containers in a pod. Kubernetes volumes are tied to the lifecycle of a pod, meaning they are created with the pod and deleted when the pod is removed. Unlike a container's ephemeral storage, a Kubernetes volume outlives any containers that run within the pod, providing persistence beyond the lifecycle of individual containers.",
+      "difficulty": "easy",
+      "notes": ""
+    },
+    {
+      "id": "Q27",
+      "question": "How do I configure a persistent volume in Kubernetes?",
+      "topic": "storage-volumes",
+      "type": "how-to",
+      "source": "synthetic-edited",
+      "ground_truth": "To configure a persistent volume in Kubernetes, you need to define a PersistentVolume (PV) object in YAML format. This object should include specifications such as storage capacity, access modes (e.g., ReadWriteOnce, ReadOnlyMany, ReadWriteMany), and the storage class. Once the PV is defined, you can create it using the `kubectl apply -f` command. After the PV is available, you can bind it to a PersistentVolumeClaim (PVC), which specifies the desired storage size and access mode. The PVC is then used in a Pod to enable storage persistence.",
+      "difficulty": "medium",
+      "notes": ""
+    },
+    {
+      "id": "Q28",
+      "question": "What is the difference between a PersistentVolume and a PersistentVolumeClaim in Kubernetes?",
+      "topic": "storage-volumes",
+      "type": "comparison",
+      "source": "synthetic-edited",
+      "ground_truth": "In Kubernetes, a PersistentVolume (PV) is a piece of storage in the cluster that has been provisioned by an administrator or dynamically created using Storage Classes. It is a resource in the cluster just like a node is a cluster resource. PersistentVolumeClaim (PVC), on the other hand, is a request for storage by a user. It is similar to a pod making a request for compute resources. PVs and PVCs act as a binding mechanism for storage in a Kubernetes cluster. A PVC will specify a certain storage size and access mode, and Kubernetes will attempt to bind it to a suitable PV that matches the request. This separation allows for decoupling of how storage is managed and how it is consumed.",
+      "difficulty": "medium",
+      "notes": "This question tests understanding of core storage concepts in Kubernetes and requires the user to differentiate between resource provisioning and consumption."
+    },
+    {
+      "id": "Q29",
+      "question": "Why would you use a PersistentVolumeClaim over a hostPath volume in Kubernetes?",
+      "topic": "storage-volumes",
+      "type": "why-tradeoff",
+      "source": "synthetic-edited",
+      "ground_truth": "A PersistentVolumeClaim (PVC) is used over a hostPath volume when you need storage that is decoupled from the specific node where your pod is running. PVCs allow for dynamic provisioning of storage resources and make it possible to easily move workloads between nodes without losing data, as the storage is managed by Kubernetes and can be backed by various storage solutions like cloud storage or networked storage. In contrast, a hostPath volume is tied to the specific node, limiting the portability and scalability of your application, and it is not suitable for production environments where data persistence and availability are critical. Therefore, PVCs are preferred for applications that require resilient, scalable, and portable storage solutions.",
+      "difficulty": "medium",
+      "notes": ""
+    },
+    {
+      "id": "Q30",
+      "question": "What happens when a PersistentVolumeClaim is bound to a PersistentVolume and the PersistentVolume is deleted manually?",
+      "topic": "storage-volumes",
+      "type": "edge-case",
+      "source": "synthetic-edited",
+      "ground_truth": "When a PersistentVolumeClaim (PVC) is bound to a PersistentVolume (PV) and the PV is manually deleted, the PVC will remain in a 'Bound' state, as Kubernetes does not automatically update the PVC status to 'Lost' or any other state. This can lead to a situation where the PVC is unable to bind to another PV, since it still considers itself bound to the now-nonexistent PV. The user must manually intervene to delete or update the PVC to make it available for binding to a new PV. This scenario highlights the importance of proper resource management and cleanup in Kubernetes environments.",
+      "difficulty": "hard",
+      "notes": "This question tests the understanding of failure modes and resource management, which are crucial for maintaining a stable Kubernetes environment."
+    },
+    {
+      "id": "Q31",
+      "question": "What is an Ingress in Kubernetes?",
+      "topic": "networking-ingress",
+      "type": "definition",
+      "source": "synthetic-edited",
+      "ground_truth": "An Ingress in Kubernetes is an API object that manages external access to services within a cluster, typically HTTP. Ingress can provide load balancing, SSL termination, and name-based virtual hosting. It allows you to define rules for routing traffic from outside the Kubernetes cluster to your services based on the URL or host. Using Ingress, you can consolidate your external access configurations and manage them centrally.",
+      "difficulty": "easy",
+      "notes": "This question tests the basic understanding of what an Ingress is and its role in Kubernetes networking. It's a fundamental concept for users working with Kubernetes networking features."
+    },
+    {
+      "id": "Q32",
+      "question": "How do you set up an Ingress resource to route traffic to different services in a Kubernetes cluster?",
+      "topic": "networking-ingress",
+      "type": "how-to",
+      "source": "synthetic-edited",
+      "ground_truth": "To set up an Ingress resource in Kubernetes, first ensure the Ingress controller is deployed in your cluster as it handles the routing of external traffic. Next, define an Ingress resource in a YAML file specifying rules that map paths or hosts to backend services, typically using the `host` and `path` fields within the `spec` section. Apply the YAML file using `kubectl apply -f <filename>.yaml`. This will create the Ingress resource that the controller uses to route external HTTP traffic to the specified services.",
+      "difficulty": "medium",
+      "notes": "This question evaluates the candidate's ability to synthesize procedural steps from the documentation and understand the role of Ingress in Kubernetes networking."
+    },
+    {
+      "id": "Q33",
+      "question": "What is the difference between Ingress and Service in Kubernetes networking?",
+      "topic": "networking-ingress",
+      "type": "comparison",
+      "source": "synthetic-edited",
+      "ground_truth": "In Kubernetes, a Service is an abstraction that defines a logical set of Pods and a policy to access them, typically by assigning a stable IP address and DNS name. It allows you to expose your Pods to the outside world or other parts of your cluster. On the other hand, an Ingress is an API object that manages external access to services in a cluster, typically HTTP. It provides load balancing, SSL termination, and name-based virtual hosting. While a Service exposes a single set of Pods, an Ingress is used to expose multiple services under the same IP address and port, managing traffic routing based on host and path.",
+      "difficulty": "medium",
+      "notes": "This question requires understanding of both the Service and Ingress concepts and how they function differently in managing network traffic within and outside of a Kubernetes cluster."
+    },
+    {
+      "id": "Q34",
+      "question": "Why would you use an Ingress over a LoadBalancer service for managing external access to services in Kubernetes?",
+      "topic": "networking-ingress",
+      "type": "why-tradeoff",
+      "source": "synthetic-edited",
+      "ground_truth": "An Ingress in Kubernetes offers more advanced routing capabilities compared to a LoadBalancer service. While a LoadBalancer service provides a single IP address to route external traffic to a service, Ingress can consolidate multiple services under a single IP with different paths and hostnames. This allows for more complex routing rules and HTTP/S level configurations like TLS termination, which are not possible with basic LoadBalancer services. Additionally, using Ingress can reduce the number of public IPs needed and is often more cost-effective in cloud environments.",
+      "difficulty": "medium",
+      "notes": "This question requires understanding both Ingress and LoadBalancer services, making it a good test of the user's knowledge of Kubernetes networking features."
+    },
+    {
+      "id": "Q35",
+      "question": "What happens when an Ingress controller is not present in a Kubernetes cluster?",
+      "topic": "networking-ingress",
+      "type": "edge-case",
+      "source": "synthetic-edited",
+      "ground_truth": "When an Ingress controller is not present in a Kubernetes cluster, the Ingress resources that define the desired routing rules will not have any effect, as these resources rely on an Ingress controller to implement the routing logic. Ingress resources are simply specifications and do not perform any actions by themselves. Without a controller, no rules will be applied, and external traffic cannot be directed to the cluster services as intended. This situation requires either deploying an Ingress controller or using alternative methods like NodePort or LoadBalancer services to expose services externally.",
+      "difficulty": "medium",
+      "notes": "This question tests the understanding of the necessity of an Ingress controller for the Ingress resources to function properly, which may not be immediately obvious to beginners."
+    },
+    {
+      "id": "Q36",
+      "question": "What is node scheduling in Kubernetes?",
+      "topic": "scheduling-nodes",
+      "type": "definition",
+      "source": "synthetic-edited",
+      "ground_truth": "Node scheduling in Kubernetes is the process by which the Kubernetes scheduler assigns Pods to Nodes within a cluster. The scheduler considers various constraints and resource requirements to ensure that the Pods are placed on Nodes that can accommodate their needs. Factors such as resource limits, affinity, anti-affinity rules, and taints and tolerations are taken into account during the scheduling process to optimize resource utilization and workload performance.",
+      "difficulty": "easy",
+      "notes": "This question is straightforward and tests the basic understanding of what node scheduling entails, which is a fundamental aspect of Kubernetes operations."
+    },
+    {
+      "id": "Q37",
+      "question": "What is the difference between node affinity and taints and tolerations in Kubernetes scheduling?",
+      "topic": "scheduling-nodes",
+      "type": "comparison",
+      "source": "synthetic-edited",
+      "ground_truth": "Node affinity is a concept that allows you to constrain which nodes your pod is eligible to be scheduled based on labels on the node. It is similar to nodeSelector but more expressive and allows for 'soft' preferences. Taints and tolerations, on the other hand, are used to ensure certain pods are not scheduled onto certain nodes. Taints are applied to nodes and repel a set of pods, while tolerations are applied to pods and allow them to be scheduled on nodes with matching taints. Both mechanisms are used in Kubernetes to control pod placement, but node affinity is more about attraction based on node labels, whereas taints and tolerations are about repulsion and exceptions.",
+      "difficulty": "medium",
+      "notes": "This question requires understanding two different scheduling mechanisms and their distinct purposes, promoting deeper comprehension of Kubernetes scheduling policies."
+    },
+    {
+      "id": "Q38",
+      "question": "Why would you choose to use taints and tolerations over node affinity for scheduling nodes in Kubernetes?",
+      "topic": "scheduling-nodes",
+      "type": "why-tradeoff",
+      "source": "synthetic-edited",
+      "ground_truth": "Taints and tolerations provide a way to ensure that Pods are not scheduled onto inappropriate nodes, allowing nodes to repel certain Pods unless they have a matching toleration. This is useful when you want to strictly control which Pods should be kept away from specific nodes. On the other hand, node affinity is more about attracting Pods to nodes with specific labels and is generally used for soft or preferred scheduling. Taints and tolerations are suitable when you need hard constraints that prevent Pods from being scheduled on unsuitable nodes, offering a higher level of control compared to node affinity, which is more flexible but less strict.",
+      "difficulty": "medium",
+      "notes": ""
+    },
+    {
+      "id": "Q39",
+      "question": "What happens when the Kubernetes scheduler fails to assign a pod to a node?",
+      "topic": "scheduling-nodes",
+      "type": "edge-case",
+      "source": "synthetic-edited",
+      "ground_truth": "When the Kubernetes scheduler fails to assign a pod to a node, the pod remains in a 'Pending' state. The scheduler may fail due to insufficient resources on the nodes, unsatisfied affinity or anti-affinity rules, or not finding a node that matches the pod's scheduling constraints. In such cases, the scheduler will continuously attempt to place the pod on a suitable node as long as the pod is within the retry policy. If the scheduler cannot resolve the issue, administrator intervention may be necessary to adjust resource allocations or constraints.",
+      "difficulty": "hard",
+      "notes": "This question tests understanding of the scheduling process and failure modes, requiring synthesis of multiple documentation aspects such as scheduling constraints and retry policies."
+    },
+    {
+      "id": "Q40",
+      "question": "What is the difference between a Kubernetes Pod and a Node?",
+      "topic": "architecture",
+      "type": "comparison",
+      "source": "synthetic-edited",
+      "ground_truth": "A Kubernetes Pod is the smallest deployable unit in Kubernetes and represents a single instance of a running process in a cluster. It can contain one or more containers that share storage, network, and a specification for how to run the containers. A Node, on the other hand, is a worker machine in Kubernetes and can be either a virtual or physical machine. Each Node runs Pods and is managed by the Kubernetes control plane, which schedules Pods across the Nodes and maintains the desired state. The primary difference is that a Pod is the application layer, while a Node is the infrastructure layer that provides the resources for the Pod's operation.",
+      "difficulty": "medium",
+      "notes": "This question requires an understanding of both infrastructure and application layers in Kubernetes, making it a good test of multi-concept retrieval."
+    },
+    {
+      "id": "Q41",
+      "question": "What happens when the kube-apiserver component fails in a Kubernetes cluster?",
+      "topic": "architecture",
+      "type": "edge-case",
+      "source": "synthetic-edited",
+      "ground_truth": "When the kube-apiserver fails, the Kubernetes cluster loses its ability to process API requests, which effectively renders the cluster unmanageable. The kube-apiserver is responsible for serving the Kubernetes API, and without it, components such as kubectl, kube-controller-manager, kube-scheduler, and other custom controllers cannot communicate with the cluster. However, running workloads on existing nodes will continue to function unless other components also fail. Recovery typically involves restarting the kube-apiserver process or node, and ensuring redundancy through high availability setups can mitigate the risk of single points of failure.",
+      "difficulty": "hard",
+      "notes": "This question is a good evaluation as it requires understanding the critical role of the kube-apiserver in a Kubernetes cluster, including its interactions with other components and the implications of its failure."
+    }
+  ]
+}

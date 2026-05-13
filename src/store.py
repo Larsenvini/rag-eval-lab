@@ -22,6 +22,7 @@ class Hit:
     source: str
     section: str
     score: float    # distance — lower is closer for cosine in Chroma
+    id: str = ""    # chroma id (e.g. "concepts/workloads/pods.md::3"); used for dedup/fusion
 
 
 class VectorStore:
@@ -88,14 +89,37 @@ class VectorStore:
         docs = result["documents"][0]
         metas = result["metadatas"][0]
         dists = result["distances"][0]
-        for doc, meta, dist in zip(docs, metas, dists):
+        ids = result["ids"][0]
+        for doc, meta, dist, _id in zip(docs, metas, dists, ids):
             hits.append(Hit(
                 text=doc,
                 source=str(meta.get("source", "")),
                 section=str(meta.get("section", "")),
                 score=float(dist),
+                id=str(_id),
             ))
         return hits
+
+    def all_chunks(self) -> list[Hit]:
+        """Return every chunk in the collection.
+
+        Used by hybrid retrieval to build a BM25 index over the same corpus
+        that's in the vector store. Distance is meaningless here and set to 0.
+        """
+        result = self._collection.get(include=["documents", "metadatas"])
+        ids = result.get("ids") or []
+        docs = result.get("documents") or []
+        metas = result.get("metadatas") or []
+        out: list[Hit] = []
+        for _id, doc, meta in zip(ids, docs, metas):
+            out.append(Hit(
+                text=doc,
+                source=str((meta or {}).get("source", "")),
+                section=str((meta or {}).get("section", "")),
+                score=0.0,
+                id=str(_id),
+            ))
+        return out
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
         """Call OpenAI embeddings API."""

@@ -29,11 +29,16 @@ class Config:
     chunk_size: int = int(os.environ.get("CHUNK_SIZE", "800"))
     chunk_overlap: int = int(os.environ.get("CHUNK_OVERLAP", "120"))
 
-    # Retrieval
-    top_k: int = int(os.environ.get("TOP_K", "5"))
+    # Retrieval (working point after Week 3 ablation: hybrid + top_k=12)
+    top_k: int = int(os.environ.get("TOP_K", "12"))
+    default_retriever: str = os.environ.get("DEFAULT_RETRIEVER", "hybrid")
 
     # Generation
-    temperature: float = float(os.environ.get("TEMPERATURE", "0.1"))
+    # Default temperature 0.0 for eval stability — non-zero temps produce
+    # different outputs across runs even with identical inputs, which makes
+    # canary thresholds bimodal at the refusal/synthesis boundary. See:
+    # evals/experiments.md → "Q06 bimodality investigation"
+    temperature: float = float(os.environ.get("TEMPERATURE", "0.0"))
     max_answer_tokens: int = int(os.environ.get("MAX_ANSWER_TOKENS", "500"))
 
 
