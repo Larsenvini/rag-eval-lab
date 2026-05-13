@@ -3,12 +3,17 @@
 Reads a scored eval run, checks it against `evals/thresholds.json`, fails
 the test (and therefore CI) on any violation.
 
+Supports both formats:
+  - Legacy single-run: `scored_*.json` with results[i].faithfulness etc.
+  - N-run merged:      `scored_n_*.json` with results[i].scores.faithfulness.median
+                       — preferred. Gate uses per-question medians.
+
 Usage:
-    # Default: latest scored_*.json in evals/results/
+    # Default: latest scored_n_*.json (fallback: scored_*.json) in evals/results/
     pytest tests/test_eval_gate.py -v
 
     # Or point at a specific file
-    EVAL_GATE_FILE=evals/results/scored_20260511_104839.json pytest tests/test_eval_gate.py -v
+    EVAL_GATE_FILE=evals/results/scored_n_20260513_103000.json pytest tests/test_eval_gate.py -v
 
 Why pytest and not a custom script:
     pytest gives us per-check pass/fail granularity in the CI output,
@@ -32,6 +37,43 @@ THRESHOLDS = REPO / "evals" / "thresholds.json"
 RESULTS_DIR = REPO / "evals" / "results"
 LAST_MAIN = RESULTS_DIR / "last_main.json"
 
+METRICS = ["faithfulness", "answer_relevance", "ground_truth_similarity"]
+
+
+# ─── Format detection & metric extraction ─────────────────────────────────
+
+def _is_n_format(data: dict) -> bool:
+    """N-run merged file: each result has a 'scores' dict with medians."""
+    return data.get("format") == "scored_n" or (
+        data.get("results") and isinstance(data["results"][0].get("scores"), dict)
+    )
+
+
+def _metric_value(result: dict, metric: str, is_n: bool) -> float:
+    """Pull the gate-relevant value for `metric` from a result dict.
+
+    For N-run format, that's the median. For legacy single-run, the raw score.
+    """
+    if is_n:
+        return float(result.get("scores", {}).get(metric, {}).get("median", 0.0))
+    return float(result.get(metric, 0.0))
+
+
+def _failure_mode(result: dict, is_n: bool) -> str:
+    """Single representative failure mode per question.
+
+    For N-run, we use the majority-vote already computed at merge time
+    (stored in result['failure_modes_observed'] as a count dict).
+    For legacy, the single `failure_mode` field.
+    """
+    if is_n:
+        modes = result.get("failure_modes_observed", {})
+        if not modes:
+            return "unknown"
+        # Same tiebreak rule as merge_scored_runs.majority_failure_modes
+        return max(sorted(modes.items()), key=lambda kv: kv[1])[0]
+    return result.get("failure_mode", "unknown")
+
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────
 
@@ -41,23 +83,38 @@ def _resolve_scored_file() -> Path:
 
     Priority:
       1. EVAL_GATE_FILE env var (CI sets this to the run it just produced)
-      2. The newest scored_*.json in evals/results/ (local dev)
+      2. Newest scored_n_*.json (preferred — N-run merged format)
+      3. Newest scored_*.json (legacy single-run format)
     """
     env = os.environ.get("EVAL_GATE_FILE")
     if env:
         return Path(env)
 
-    candidates = sorted(
-        RESULTS_DIR.glob("scored_*.json"),
+    # Prefer the N-run merged format if any exist
+    n_candidates = sorted(
+        RESULTS_DIR.glob("scored_n_*.json"),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
-    if not candidates:
-        pytest.skip(
-            "No scored_*.json files in evals/results/. Run "
-            "`python -m scripts.run_eval && python -m scripts.score_eval ...` first."
+    if n_candidates:
+        return n_candidates[0]
+
+    # Fall back to single-run files; exclude the n-merged ones already checked
+    legacy_candidates = [
+        p for p in sorted(
+            RESULTS_DIR.glob("scored_*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
         )
-    return candidates[0]
+        if not p.name.startswith("scored_n_")
+    ]
+    if legacy_candidates:
+        return legacy_candidates[0]
+
+    pytest.skip(
+        "No scored_*.json or scored_n_*.json in evals/results/. Run "
+        "`python -m scripts.run_eval_n` (preferred) or `run_eval` + `score_eval` first."
+    )
 
 
 @pytest.fixture(scope="module")
@@ -73,30 +130,46 @@ def scored() -> dict:
     try:
         display = path.relative_to(REPO)
     except ValueError:
-        display = path  # file is outside the repo; just show the full path
+        display = path
     print(f"\n[eval-gate] Checking: {display}")
-    return json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["__is_n_format"] = _is_n_format(data)
+    if data["__is_n_format"]:
+        print(f"[eval-gate] N-run format detected (n={data.get('n_runs', '?')})")
+    else:
+        print(f"[eval-gate] Single-run format detected (no variance data)")
+    return data
 
 
 @pytest.fixture(scope="module")
 def aggregates(scored) -> dict:
-    """Compute aggregate metrics from the scored results."""
+    """Compute aggregate metrics.
+
+    For N-format: prefer the precomputed `aggregates` block (median-of-medians).
+    For legacy: compute mean across questions on the fly.
+    """
     results = scored["results"]
     n = len(results)
     if n == 0:
         pytest.fail("Scored run has zero results.")
+
+    is_n = scored["__is_n_format"]
+    if is_n and "aggregates" in scored:
+        return {
+            m: scored["aggregates"][m]["median"] for m in METRICS
+        } | {"n": n}
+
+    # Legacy or missing aggregates block: compute on the fly
     return {
-        "faithfulness": sum(r.get("faithfulness", 0) for r in results) / n,
-        "answer_relevance": sum(r.get("answer_relevance", 0) for r in results) / n,
-        "ground_truth_similarity": sum(r.get("ground_truth_similarity", 0) for r in results) / n,
-        "n": n,
-    }
+        m: sum(_metric_value(r, m, is_n) for r in results) / n
+        for m in METRICS
+    } | {"n": n}
 
 
 # ─── Aggregate threshold checks ───────────────────────────────────────────
 
 
-@pytest.mark.parametrize("metric", ["faithfulness", "answer_relevance", "ground_truth_similarity"])
+@pytest.mark.parametrize("metric", METRICS)
 def test_aggregate_above_threshold(metric, aggregates, thresholds):
     """Each aggregate metric must be at or above its floor."""
     floor = thresholds["aggregate"][metric]["min"]
@@ -111,7 +184,11 @@ def test_aggregate_above_threshold(metric, aggregates, thresholds):
 
 
 def _failure_counts(scored) -> Counter:
-    return Counter(r.get("failure_mode", "unknown") for r in scored["results"])
+    is_n = scored["__is_n_format"]
+    # For N-format with majority_failure_modes precomputed, use it.
+    if is_n and "majority_failure_modes" in scored:
+        return Counter(scored["majority_failure_modes"])
+    return Counter(_failure_mode(r, is_n) for r in scored["results"])
 
 
 def test_retrieval_miss_count_below_ceiling(scored, thresholds):
@@ -136,11 +213,31 @@ def test_clean_answer_count_above_floor(scored, thresholds):
     )
 
 
+# ─── Stability checks (N-run format only) ────────────────────────────────
+
+
+def test_bimodal_question_count(scored, thresholds):
+    """Number of bimodal questions must stay at or below the configured ceiling.
+
+    Skipped for legacy single-run files (no stability data available).
+    """
+    if not scored["__is_n_format"]:
+        pytest.skip("Stability check requires N-run format (scored_n_*.json)")
+
+    stability_cfg = thresholds.get("stability", {})
+    ceiling = stability_cfg.get("bimodal_max", {}).get("value")
+    if ceiling is None:
+        pytest.skip("No stability.bimodal_max threshold configured")
+
+    counts = scored.get("stability_breakdown", {})
+    observed = counts.get("bimodal", 0)
+    assert observed <= ceiling, (
+        f"\n  bimodal question count: {observed}  exceeds ceiling {ceiling}.\n"
+        f"  Note: {stability_cfg['bimodal_max'].get('note', '')}\n"
+    )
+
+
 # ─── Canary checks ────────────────────────────────────────────────────────
-
-
-def _canary_specs(thresholds) -> list[dict]:
-    return thresholds["canaries"]["questions"]
 
 
 @pytest.mark.parametrize(
@@ -154,6 +251,9 @@ def test_canary_question(spec, scored):
     Canaries are questions that score 0.00 in baseline and are *only* fixed
     by working retrieval. If a canary regresses, retrieval is broken — even
     if aggregates look fine.
+
+    For N-run format, the gate uses the *median* relevance across runs,
+    which is robust to single-run stochasticity.
     """
     qid = spec["id"]
     floor = spec["min_relevance"]
@@ -161,9 +261,12 @@ def test_canary_question(spec, scored):
     match = next((r for r in scored["results"] if r.get("id") == qid), None)
     assert match is not None, f"Canary {qid} not found in scored results."
 
-    observed = match.get("answer_relevance", 0)
+    is_n = scored["__is_n_format"]
+    observed = _metric_value(match, "answer_relevance", is_n)
+    label = "median relevance" if is_n else "relevance"
+
     assert observed >= floor, (
-        f"\n  Canary {qid} relevance: {observed:.2f}  is below floor {floor:.2f}.\n"
+        f"\n  Canary {qid} {label}: {observed:.2f}  is below floor {floor:.2f}.\n"
         f"  This question is a known retrieval-sensitive case. Aggregate scores "
         f"may still look fine, but core retrieval has regressed.\n"
     )
@@ -182,20 +285,25 @@ def test_no_regression_vs_last_main(aggregates, thresholds):
         pytest.skip("No evals/results/last_main.json yet. First run; nothing to compare.")
 
     prev = json.loads(LAST_MAIN.read_text(encoding="utf-8"))
+    prev_is_n = _is_n_format(prev)
     prev_results = prev.get("results", [])
     if not prev_results:
         pytest.skip("last_main.json has no results.")
 
-    n = len(prev_results)
-    prev_agg = {
-        "faithfulness": sum(r.get("faithfulness", 0) for r in prev_results) / n,
-        "answer_relevance": sum(r.get("answer_relevance", 0) for r in prev_results) / n,
-        "ground_truth_similarity": sum(r.get("ground_truth_similarity", 0) for r in prev_results) / n,
-    }
+    # If last_main is N-format and has its own aggregates block, use that.
+    if prev_is_n and "aggregates" in prev:
+        prev_agg = {m: prev["aggregates"][m]["median"] for m in METRICS}
+    else:
+        n = len(prev_results)
+        prev_agg = {
+            m: sum(_metric_value(r, m, prev_is_n) for r in prev_results) / n
+            for m in METRICS
+        }
+
     max_drop = thresholds["regression"]["max_drop_per_metric"]
 
     regressions = []
-    for metric in ["faithfulness", "answer_relevance", "ground_truth_similarity"]:
+    for metric in METRICS:
         drop = prev_agg[metric] - aggregates[metric]
         if drop > max_drop:
             regressions.append(
