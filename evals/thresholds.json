@@ -28,8 +28,18 @@
       "note": "Working point: 6. Baseline was 10. Floor of 9 means we're not allowed to regress to baseline behavior."
     },
     "none_min": {
-      "value": 7,
-      "note": "Working point: 8 clean answers. Floor of 7 means we keep at least most of the wins."
+      "value": 5,
+      "note": "Observed range across 5+ stable runs (same code, same retriever): 6-11. Floor of 5 catches real regression without flaking on judge stochasticity at the 'none' vs 'answer-incomplete' boundary. To be revisited if the regression-vs-last-main check (see below) is extended to cover failure-mode counts.",
+      "set_on": "2026-05-13",
+      "set_after": "Two consecutive identical CI runs produced none=10 then none=6 — pure judge variance, no code change."
+    }
+  },
+
+  "stability": {
+    "_note": "Stability checks apply only to N-run (scored_n_*.json) eval files. Each question is classified across N runs as 'stable' (std <= 0.10), 'mild-variance' (0.10 < std <= 0.25), or 'bimodal' (std > 0.25). The build fails if too many questions become bimodal — that signals systemic judge instability or a corpus/prompt change that's destabilizing answers.",
+    "bimodal_max": {
+      "value": 4,
+      "note": "Working assumption: ~1-3 bimodal questions across the 41-question set is normal LLM-as-judge noise. Ceiling of 4 catches a clear shift. Tighten as we accumulate more N-run history."
     }
   },
 

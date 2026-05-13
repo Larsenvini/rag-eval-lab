@@ -36,13 +36,39 @@ def load_json(p: Path) -> dict | None:
     return json.loads(p.read_text(encoding="utf-8"))
 
 
-def aggregate(results: list[dict]) -> dict[str, float]:
+def _is_n_format(data: dict | None) -> bool:
+    if not data:
+        return False
+    return data.get("format") == "scored_n" or (
+        data.get("results") and isinstance(data["results"][0].get("scores"), dict)
+    )
+
+
+def _metric_value(result: dict, metric: str, is_n: bool) -> float:
+    if is_n:
+        return float(result.get("scores", {}).get(metric, {}).get("median", 0.0))
+    return float(result.get(metric, 0.0))
+
+
+def _failure_mode_for(result: dict, is_n: bool) -> str:
+    if is_n:
+        modes = result.get("failure_modes_observed", {})
+        if not modes:
+            return "unknown"
+        return max(sorted(modes.items()), key=lambda kv: kv[1])[0]
+    return result.get("failure_mode", "unknown")
+
+
+def aggregate(results: list[dict], is_n: bool = False) -> dict[str, float]:
     n = len(results) or 1
-    return {key: sum(r.get(key, 0) for r in results) / n for key, _ in METRICS}
+    return {
+        key: sum(_metric_value(r, key, is_n) for r in results) / n
+        for key, _ in METRICS
+    }
 
 
-def failure_breakdown(results: list[dict]) -> Counter:
-    return Counter(r.get("failure_mode", "unknown") for r in results)
+def failure_breakdown(results: list[dict], is_n: bool = False) -> Counter:
+    return Counter(_failure_mode_for(r, is_n) for r in results)
 
 
 def fmt_delta(delta: float) -> str:
@@ -64,9 +90,13 @@ def render(scored: dict, baseline: dict | None, last_main: dict | None) -> str:
     if not results:
         return "⚠️ Eval run had no results."
 
+    is_n = _is_n_format(scored)
+    base_is_n = _is_n_format(baseline)
+    last_is_n = _is_n_format(last_main)
+
     n = len(results)
-    cur = aggregate(results)
-    cur_fm = failure_breakdown(results)
+    cur = aggregate(results, is_n=is_n)
+    cur_fm = failure_breakdown(results, is_n=is_n)
 
     # Header & meta
     run_id = scored.get("run_id", "?")
@@ -75,21 +105,25 @@ def render(scored: dict, baseline: dict | None, last_main: dict | None) -> str:
     retriever = cfg.get("retriever", "?")
     top_k = cfg.get("top_k", "?")
     gen_model = cfg.get("generation_model", "?")
+    n_runs = scored.get("n_runs")
 
     lines: list[str] = []
     lines.append("## 🤖 RAG eval results")
     lines.append("")
-    lines.append(f"**Run:** `{run_id}` · **n** = {n} · **retriever:** `{retriever}` · "
-                 f"**top_k:** `{top_k}` · **model:** `{gen_model}`")
+    header_meta = f"**Run:** `{run_id}` · **questions** = {n} · **retriever:** `{retriever}` · " \
+                  f"**top_k:** `{top_k}` · **model:** `{gen_model}`"
+    if n_runs:
+        header_meta += f" · **N runs** = `{n_runs}` (median-aggregated)"
+    lines.append(header_meta)
     if note:
         lines.append(f"_{note}_")
     lines.append("")
 
     # ── Aggregate table ──────────────────────────────────────────────────
-    base = aggregate(baseline["results"]) if baseline else None
-    last = aggregate(last_main["results"]) if last_main else None
+    base = aggregate(baseline["results"], is_n=base_is_n) if baseline else None
+    last = aggregate(last_main["results"], is_n=last_is_n) if last_main else None
 
-    lines.append("### Aggregate scores")
+    lines.append("### Aggregate scores" + (" (medians across N runs)" if is_n else ""))
     lines.append("")
     header = "| Metric |   This run | vs baseline | vs last main |"
     sep    = "|--------|-----------:|------------:|-------------:|"
@@ -103,7 +137,7 @@ def render(scored: dict, baseline: dict | None, last_main: dict | None) -> str:
     lines.append("")
 
     # ── Failure mode breakdown ───────────────────────────────────────────
-    base_fm = failure_breakdown(baseline["results"]) if baseline else Counter()
+    base_fm = failure_breakdown(baseline["results"], is_n=base_is_n) if baseline else Counter()
     all_modes = sorted(set(cur_fm) | set(base_fm),
                        key=lambda m: -cur_fm.get(m, 0))
 
@@ -122,17 +156,41 @@ def render(scored: dict, baseline: dict | None, last_main: dict | None) -> str:
         lines.append(f"| `{mode}` | {cur_c} | {fmt_count_delta(delta, lower_better)} |")
     lines.append("")
 
+    # ── Stability (N-run only) ──────────────────────────────────────────
+    if is_n:
+        breakdown = scored.get("stability_breakdown", {})
+        if breakdown:
+            stable = breakdown.get("stable", 0)
+            mild = breakdown.get("mild-variance", 0)
+            bimodal = breakdown.get("bimodal", 0)
+            lines.append("### Stability across N runs")
+            lines.append("")
+            lines.append("| Bucket | Count |")
+            lines.append("|--------|------:|")
+            lines.append(f"| 🟢 stable (std ≤ 0.10)         | {stable} |")
+            lines.append(f"| 🟡 mild-variance (≤ 0.25)      | {mild} |")
+            lines.append(f"| 🔴 bimodal (> 0.25)            | {bimodal} |")
+            lines.append("")
+            # Surface the actual bimodal question IDs — useful for debugging
+            bimodals = [q["id"] for q in results if q.get("stability") == "bimodal"]
+            if bimodals:
+                lines.append(f"_Bimodal questions:_ {', '.join(f'`{b}`' for b in sorted(bimodals))}")
+                lines.append("")
+
     # ── Canaries (if labeled in thresholds, we don't know here — surface the three best-known) ──
     canary_ids = {"Q06", "Q20", "Q25"}
     canary_rows = []
     for r in results:
         if r.get("id") in canary_ids:
-            canary_rows.append((r["id"], r.get("answer_relevance", 0), r.get("failure_mode", "?")))
+            rel = _metric_value(r, "answer_relevance", is_n)
+            mode = _failure_mode_for(r, is_n)
+            canary_rows.append((r["id"], rel, mode))
 
     if canary_rows:
         lines.append("### Canaries")
         lines.append("")
-        lines.append("| ID | Relevance | Mode |")
+        label = "Median Relevance" if is_n else "Relevance"
+        lines.append(f"| ID | {label} | Mode |")
         lines.append("|----|----------:|------|")
         for qid, rel, mode in sorted(canary_rows):
             emoji = "🟢" if rel >= 0.5 else ("🟡" if rel >= 0.2 else "🔴")
@@ -147,11 +205,11 @@ def render(scored: dict, baseline: dict | None, last_main: dict | None) -> str:
             qid = r.get("id")
             if not qid or qid not in base_by_id:
                 continue
-            d_rel   = r.get("answer_relevance", 0) - base_by_id[qid].get("answer_relevance", 0)
-            d_faith = r.get("faithfulness", 0)    - base_by_id[qid].get("faithfulness", 0)
+            d_rel = _metric_value(r, "answer_relevance", is_n) - _metric_value(base_by_id[qid], "answer_relevance", base_is_n)
+            d_faith = _metric_value(r, "faithfulness", is_n) - _metric_value(base_by_id[qid], "faithfulness", base_is_n)
             movers.append((qid, d_faith, d_rel,
-                          base_by_id[qid].get("failure_mode", "?"),
-                          r.get("failure_mode", "?")))
+                          _failure_mode_for(base_by_id[qid], base_is_n),
+                          _failure_mode_for(r, is_n)))
         # Sort by |d_rel| descending
         movers.sort(key=lambda t: -abs(t[2]))
 

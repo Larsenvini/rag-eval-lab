@@ -1,14 +1,16 @@
 name: eval
 
 # ─── When this runs ───────────────────────────────────────────────────────
-# - PRs targeting main, only when files that could affect eval are touched
-# - Pushes to main, same path filter
-# - Manual dispatch from the Actions tab
+# - PRs targeting main, only when files that could affect eval are touched.
+#   These runs use N=1 — fast feedback (~5 min), gates the merge.
+# - Pushes to main, same path filter. These use N=3 — rigorous (~15 min),
+#   updates last_main.json as the canonical post-merge baseline.
+# - Manual dispatch from the Actions tab (N is selectable via input).
 #
 # Mitigations baked in to keep cost & noise down:
 # - paths filter (docs-only commits don't trigger eval)
 # - [skip-eval] in the commit message bypasses the job
-# - workflow_dispatch lets you manually re-run if needed
+# - workflow_dispatch lets you manually re-run with custom N
 # - concurrency cancels in-flight runs for the same PR if you push again
 on:
   pull_request:
@@ -27,6 +29,11 @@ on:
       - "evals/**"
       - "requirements.txt"
   workflow_dispatch:
+    inputs:
+      n_runs:
+        description: "Number of eval runs to average over"
+        required: false
+        default: "3"
 
 concurrency:
   group: eval-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -39,7 +46,7 @@ permissions:
 jobs:
   eval-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35   # increased from 20 — N=3 takes longer
 
     # Honor [skip-eval] in any line of the commit/PR-head message
     if: ${{ !contains(github.event.head_commit.message, '[skip-eval]') }}
@@ -49,6 +56,22 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Determine N runs
+        id: determine_n
+        run: |
+          # PR runs use N=1 for fast iteration.
+          # Main pushes use N=3 to get medians for the canonical record.
+          # Manual dispatch uses whatever the user passed.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            N="${{ github.event.inputs.n_runs }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            N=3
+          else
+            N=1
+          fi
+          echo "n=$N" >> "$GITHUB_OUTPUT"
+          echo "Using N=$N for this run"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -69,37 +92,27 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python -m scripts.ingest
 
-      - name: Run eval against golden set
+      - name: Run eval (N times) and merge
         id: run_eval
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Use the locked working point. Explicit > implicit on CI.
           DEFAULT_RETRIEVER: hybrid
         run: |
-          python -m scripts.run_eval --note "CI: ${{ github.event.pull_request.number || github.sha }}"
-          # Find the file that was just written
-          RUN_FILE=$(ls -t evals/results/run_*.json | head -n 1)
-          echo "run_file=$RUN_FILE" >> "$GITHUB_OUTPUT"
-          echo "Run file: $RUN_FILE"
-
-      - name: Score the run with LLM-as-judge
-        id: score_eval
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          python -m scripts.score_eval "${{ steps.run_eval.outputs.run_file }}"
-          SCORED_FILE=$(ls -t evals/results/scored_*.json | head -n 1)
+          NOTE="CI: ${{ github.event.pull_request.number || github.sha }}"
+          python -m scripts.run_eval_n --n ${{ steps.determine_n.outputs.n }} --note "$NOTE"
+          # Find the merged scored file we just produced
+          SCORED_FILE=$(ls -t evals/results/scored_n_*.json | head -n 1)
           echo "scored_file=$SCORED_FILE" >> "$GITHUB_OUTPUT"
           echo "Scored file: $SCORED_FILE"
 
       - name: Format eval summary as Markdown
-        if: always() && steps.score_eval.outputs.scored_file != ''
+        if: always() && steps.run_eval.outputs.scored_file != ''
         run: |
-          python -m scripts.post_eval_summary "${{ steps.score_eval.outputs.scored_file }}" > eval_summary.md
+          python -m scripts.post_eval_summary "${{ steps.run_eval.outputs.scored_file }}" > eval_summary.md
           cat eval_summary.md
 
       - name: Post summary as PR comment
-        if: github.event_name == 'pull_request' && steps.score_eval.outputs.scored_file != ''
+        if: github.event_name == 'pull_request' && steps.run_eval.outputs.scored_file != ''
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: rag-eval-results
@@ -107,15 +120,15 @@ jobs:
 
       - name: Run quality gate (pytest)
         env:
-          EVAL_GATE_FILE: ${{ steps.score_eval.outputs.scored_file }}
+          EVAL_GATE_FILE: ${{ steps.run_eval.outputs.scored_file }}
         run: pytest tests/test_eval_gate.py -v
 
       - name: Upload scored results as artifact
-        if: always() && steps.score_eval.outputs.scored_file != ''
+        if: always() && steps.run_eval.outputs.scored_file != ''
         uses: actions/upload-artifact@v4
         with:
           name: scored-eval-${{ github.run_id }}
-          path: ${{ steps.score_eval.outputs.scored_file }}
+          path: ${{ steps.run_eval.outputs.scored_file }}
           retention-days: 30
 
       # Only on push-to-main runs that passed the gate: refresh last_main.json.
@@ -123,7 +136,6 @@ jobs:
       - name: Refresh last_main.json (on main push only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && success()
         run: |
-          cp "${{ steps.score_eval.outputs.scored_file }}" evals/results/last_main.json
-          echo "last_main.json updated. Note: this is built artifact, not auto-committed."
-          # If you want this auto-committed back to main, add a peter-evans/create-pull-request
-          # step here. For now we leave it as a workflow artifact only.
+          cp "${{ steps.run_eval.outputs.scored_file }}" evals/results/last_main.json
+          echo "last_main.json updated. Note: this is a workflow artifact only,"
+          echo "not auto-committed. To persist it, add a commit step here."
