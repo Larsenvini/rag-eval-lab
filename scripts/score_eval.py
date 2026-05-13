@@ -25,6 +25,7 @@ FAILURE_MODES = {
     "none": "Answer is correct and reasonably complete",
     "retrieval-miss": "Contexts don't contain the needed info (retrieval failed, not model's fault)",
     "hallucination": "Answer includes facts not in the retrieved contexts",
+    "factual-error": "Answer contradicts the retrieved contexts",
     "synthesis-fail": "Contexts had the answer but model failed to combine them correctly",
     "assumes-prior": "Answer assumes K8s knowledge not derivable from the contexts",
     "out-of-scope": "Question not answerable from the K8s docs corpus",
@@ -68,47 +69,101 @@ RETRIEVED CONTEXTS (what the RAG system was given):
 RAG SYSTEM ANSWER:
 {answer}
 
-Score the RAG System Answer on these dimensions. Use FINE-GRAINED values — the full
-range 0.0 to 1.0 in 0.1 increments is valid. Do not round everything to 0.0, 0.5,
-or 1.0. Reserve 1.0 for truly complete answers and 0.0 for total failures.
+Score the RAG System Answer on three dimensions. For each, work through
+the decision tree top to bottom and pick the FIRST score whose criteria
+all match. Do not skip levels. Do not average. Pick exactly one.
 
-1. FAITHFULNESS (0.0-1.0): Are the answer's claims traceable to the retrieved contexts?
-   - 0.9-1.0 = Every claim grounded in the contexts
-   - 0.6-0.8 = Mostly grounded; one or two minor unsupported details
-   - 0.3-0.5 = Several claims unsupported or embellished beyond the contexts
-   - 0.0-0.2 = Answer largely fabricates information not present in contexts
+═══════════════════════════════════════════════════════════════════════
+1. FAITHFULNESS — Are the answer's claims grounded in the retrieved contexts?
+═══════════════════════════════════════════════════════════════════════
+Step 1: Does the answer contain ANY claim that is contradicted by the
+        contexts, or contain commands/YAML keys/field names that do
+        NOT appear in any context?
+        YES → score is 0.0 to 0.3. Go to step 1a.
+        NO  → go to step 2.
 
-2. ANSWER_RELEVANCE (0.0-1.0): Does the answer address what the question actually asked?
-   - 0.9-1.0 = Directly and completely answers every part of the question
-   - 0.6-0.8 = Addresses the main question but misses secondary aspects
-   - 0.3-0.5 = Touches the topic but misses the core ask
-   - 0.0-0.2 = Off-topic or refuses without justification
+  Step 1a: Is the contradicted/invented content the primary substance
+           of the answer (i.e. removing it leaves nothing)?
+           YES → 0.0–0.1.   NO → 0.2–0.3.
 
-3. GROUND_TRUTH_SIMILARITY (0.0-1.0): How much of the ground truth's KEY FACTS appear in the answer?
-   Note: wording does not need to match — score on factual coverage, not phrasing.
-   - 0.9-1.0 = All key facts from the ground truth are present
-   - 0.6-0.8 = Most key facts present; one or two details absent
-   - 0.3-0.5 = Some key facts present; notable gaps
-   - 0.0-0.2 = Most key facts absent or contradicted
+Step 2: Does every factual claim in the answer have direct support in
+        the contexts (not paraphrase, not inference — actual support)?
+        YES → go to step 3.
+        NO  → score is 0.4 to 0.6. The ratio of supported : unsupported
+              claims determines where in that range (mostly supported = 0.6,
+              half = 0.5, mostly unsupported but no contradictions = 0.4).
 
-4. FAILURE_MODE: WHY is the answer wrong or incomplete? Pick exactly one.
-   This describes the ROOT CAUSE, not which score was low.
-   Do NOT return a metric name (like "ground-truth-similarity") as a failure mode.
-   - "none" — Answer is correct and reasonably complete
-   - "retrieval-miss" — The contexts don't contain the needed information (retrieval failed)
-   - "hallucination" — Answer includes facts not supported by the retrieved contexts
-   - "synthesis-fail" — Contexts had the answer but model failed to combine/present it correctly
-   - "assumes-prior" — Answer assumes K8s knowledge not derivable from the provided contexts
-   - "out-of-scope" — Question is genuinely not answerable from the K8s docs corpus
-   - "answer-incomplete" — Answer is grounded and on-topic but shallower than needed; key points missing
+Step 3: Does the answer add NO information beyond what's in the contexts
+        (no extra "common knowledge" beyond what was retrieved)?
+        YES → 0.9–1.0. Reserve 1.0 for answers that quote/paraphrase
+              chunks with zero added scaffolding.
+        NO  → 0.7–0.8 if the added content is uncontroversial K8s
+              common knowledge; 0.4–0.6 if it's substantive and unsupported.
 
+═══════════════════════════════════════════════════════════════════════
+2. ANSWER_RELEVANCE — Does it address what was asked?
+═══════════════════════════════════════════════════════════════════════
+Step 1: Does the answer refuse ("I don't have enough information") AND
+        the contexts actually do contain enough information?
+        YES → 0.0.
+
+Step 2: Does the answer refuse AND the contexts genuinely lack the info?
+        YES → 1.0 (correct refusal).
+
+Step 3: Does the answer talk about a different topic than the question?
+        YES → 0.0–0.2 depending on tangential relevance.
+
+Step 4: Does the answer address the main question but ignore an explicit
+        secondary part (e.g. "X and why" — answers X, ignores "why")?
+        YES → 0.5–0.7. Closer to 0.7 if X is answered well.
+
+Step 5: Does the answer address every part of the question?
+        Direct and complete → 0.9–1.0
+        Direct but missing one detail → 0.8–0.9
+
+═══════════════════════════════════════════════════════════════════════
+3. GROUND_TRUTH_SIMILARITY — How much of the expected answer's KEY FACTS appear?
+═══════════════════════════════════════════════════════════════════════
+Count the key facts in the ground truth (typically 3-6 substantive claims).
+Score = (key facts present in the answer, regardless of phrasing) / (total key facts).
+
+0.0–0.2  → almost none present, or contradicted
+0.3–0.4  → minority present
+0.5–0.6  → roughly half
+0.7–0.8  → most present, one or two absent
+0.9–1.0  → all key facts present (1.0 only if NOTHING substantive is missing)
+
+DO NOT score on phrasing similarity. The answer can be worded entirely
+differently from the ground truth; only the factual content matters.
+
+═══════════════════════════════════════════════════════════════════════
+4. FAILURE_MODE — Pick exactly one. This describes the ROOT CAUSE.
+═══════════════════════════════════════════════════════════════════════
+Walk this decision tree. Stop at the first match.
+
+1. Are all three scores >= 0.85? → "none"
+2. Does the answer contain factual content NOT in the contexts (claims, commands,
+   YAML keys, field names that aren't there)? → "hallucination"
+3. Does the answer contradict the contexts? → "factual-error"
+4. Is the answer grounded and on-topic, but missing >=1 key fact from the
+   ground truth? → "answer-incomplete"
+5. Did the model refuse despite contexts containing the answer? → "synthesis-fail"
+6. Do the retrieved contexts genuinely not contain the answer? → "retrieval-miss"
+7. Is the question outside the corpus's domain? → "out-of-scope"
+8. Does the answer assume Kubernetes knowledge not derivable from the
+   contexts (e.g. uses jargon a learner couldn't decode from what was given)?
+   → "assumes-prior"
+
+═══════════════════════════════════════════════════════════════════════
+OUTPUT
+═══════════════════════════════════════════════════════════════════════
 Return ONLY a JSON object:
 {{
   "faithfulness": <float 0.0-1.0>,
   "answer_relevance": <float 0.0-1.0>,
   "ground_truth_similarity": <float 0.0-1.0>,
-  "failure_mode": "<one of the seven options above>",
-  "reasoning": "<2-3 sentences explaining your scores and why you chose that failure mode>"
+  "failure_mode": "<one of: none, hallucination, factual-error, answer-incomplete, synthesis-fail, retrieval-miss, out-of-scope, assumes-prior>",
+  "reasoning": "<2-3 sentences citing the specific decision-tree branches that led to each score>"
 }}
 """
 
@@ -133,6 +188,7 @@ def judge_one(client: OpenAI, result: dict, model: str) -> dict:
         model=model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.0,
+        seed=42,
         response_format={"type": "json_object"},
     )
     data = json.loads(response.choices[0].message.content or "{}")
