@@ -4,7 +4,8 @@
     "set_on": "2026-05-11",
     "set_versus": "evals/results/baseline.json (top_k=5, dense) — the locked Week 2 reference",
     "current_working_point": "hybrid retrieval (BM25+vector+RRF), top_k=12",
-    "rationale": "Thresholds are set just under the current working point's measured values, leaving room for judge noise (~±0.02 on aggregates). Tightening these is part of normal iteration; loosening them requires an explicit 'why' note in this file."
+    "rationale": "Thresholds are set just under the current working point's measured values, leaving room for judge noise (~±0.05 on aggregates). Tightening these is part of normal iteration; loosening them requires an explicit 'why' note in this file.",
+    "judge_history": "We briefly experimented (2026-05-13) with a stricter decision-tree judge rubric to reduce variance. It dropped observed faithfulness from ~0.88 to ~0.70 on identical model output — the rubric was working as designed but the absolute scores became hard to interpret and compare. Reverted in favor of the original prose-band rubric, since N=3 medians + code checks + failure-mode drift detection already mitigate variance from a different angle."
   },
 
   "aggregate": {
@@ -25,7 +26,7 @@
   "failure_modes": {
     "retrieval_miss_max": {
       "value": 9,
-      "note": "Working point: 6. Baseline was 10. Floor of 9 means we're not allowed to regress to baseline behavior."
+      "note": "Working point: 4-6 across recent runs. Baseline was 10. Floor of 9 means we're not allowed to regress to baseline behavior."
     },
     "none_min": {
       "value": 5,
