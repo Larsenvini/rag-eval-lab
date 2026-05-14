@@ -4,7 +4,8 @@
     "set_on": "2026-05-11",
     "set_versus": "evals/results/baseline.json (top_k=5, dense) — the locked Week 2 reference",
     "current_working_point": "hybrid retrieval (BM25+vector+RRF), top_k=12",
-    "rationale": "Thresholds are set just under the current working point's measured values, leaving room for judge noise (~±0.02 on aggregates). Tightening these is part of normal iteration; loosening them requires an explicit 'why' note in this file."
+    "rationale": "Thresholds are set just under the current working point's measured values, leaving room for judge noise (~±0.05 on aggregates). Tightening these is part of normal iteration; loosening them requires an explicit 'why' note in this file.",
+    "judge_history": "We briefly experimented (2026-05-13) with a stricter decision-tree judge rubric to reduce variance. It dropped observed faithfulness from ~0.88 to ~0.70 on identical model output — the rubric was working as designed but the absolute scores became hard to interpret and compare. Reverted in favor of the original prose-band rubric, since N=3 medians + code checks + failure-mode drift detection already mitigate variance from a different angle."
   },
 
   "aggregate": {
@@ -25,7 +26,7 @@
   "failure_modes": {
     "retrieval_miss_max": {
       "value": 9,
-      "note": "Working point: 6. Baseline was 10. Floor of 9 means we're not allowed to regress to baseline behavior."
+      "note": "Working point: 4-6 across recent runs. Baseline was 10. Floor of 9 means we're not allowed to regress to baseline behavior."
     },
     "none_min": {
       "value": 5,
@@ -43,6 +44,22 @@
     }
   },
 
+  "code_checks": {
+    "_note": "Deterministic rule-based checks on RAG answers (no LLM involved). These catch contract-compliance bugs that the LLM judge doesn't measure: missing citations, suspiciously short answers, forbidden patterns. Stored alongside scored_*.json as code_checks_*.json.",
+    "missing_citation_max": {
+      "value": 5,
+      "note": "Answers without [n] citations on non-refusal questions. >5 means the generator's prompt is failing to enforce citations consistently."
+    },
+    "suspiciously_short_max": {
+      "value": 3,
+      "note": "Non-refusal answers under 25 words. >3 means the generator is being too terse on substantive questions (probably max_tokens or prompt issue)."
+    },
+    "forbidden_patterns_max": {
+      "value": 0,
+      "note": "Answers containing 'as an AI', markdown headings, etc. Should be zero — these are absolute contract violations."
+    }
+  },
+
   "canaries": {
     "_note": "These three questions scored 0.00 across all metrics in baseline. Hybrid retrieval fixed Q20 and Q25 reliably. Q06 (frontend/backend/database architecture question) is BIMODAL: the model sometimes refuses ('I don't have enough information') and sometimes synthesizes a strong answer, even with retrieved chunks unchanged. Root cause: borderline grounding decision at temperature > 0, where the strict-grounding system prompt occasionally triggers refusal. With temperature now pinned to 0.0 the behavior is deterministic, but the deterministic outcome depends on retrieval ordering which still has minor non-determinism in hybrid mode. Q06 is therefore kept as an OBSERVABILITY canary (we still see its score in the report) but its threshold is set to 0 — failure of Q06 alone won't block the build. Q20 and Q25 remain HARD canaries.",
     "questions": [
@@ -53,7 +70,14 @@
   },
 
   "regression": {
-    "_note": "In addition to absolute thresholds, no aggregate may regress more than this amount from the previous scored run committed to evals/results/last_main.json. Catches gradual drift even when absolute floors are still met.",
-    "max_drop_per_metric": 0.05
+    "_note": "In addition to absolute thresholds, no metric may regress more than these amounts from the previous main-branch run in evals/results/last_main.json. Catches gradual drift even when absolute floors still pass.",
+    "max_drop_per_metric": 0.05,
+    "failure_mode_drift": {
+      "_note": "How much the count of each failure mode is allowed to drift between consecutive main runs. 'increase' caps how many more bad-mode questions we tolerate; 'decrease' caps how many fewer good-mode (none) we tolerate. Together these catch real shifts that absolute floors miss.",
+      "retrieval-miss":    {"max_increase": 3},
+      "synthesis-fail":    {"max_increase": 3},
+      "answer-incomplete": {"max_increase": 4},
+      "none":              {"max_decrease": 4}
+    }
   }
 }

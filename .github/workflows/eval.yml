@@ -104,6 +104,13 @@ jobs:
           SCORED_FILE=$(ls -t evals/results/scored_n_*.json | head -n 1)
           echo "scored_file=$SCORED_FILE" >> "$GITHUB_OUTPUT"
           echo "Scored file: $SCORED_FILE"
+          # Run code checks on the most recent individual run (not the merged one — code
+          # checks operate on raw `answer` strings, which only exist in run_*.json)
+          RUN_FILE=$(ls -t evals/results/run_*.json | head -n 1)
+          python -m scripts.code_checks "$RUN_FILE"
+          CHECKS_FILE=$(ls -t evals/results/code_checks_*.json | head -n 1)
+          echo "checks_file=$CHECKS_FILE" >> "$GITHUB_OUTPUT"
+          echo "Code checks file: $CHECKS_FILE"
 
       - name: Format eval summary as Markdown
         if: always() && steps.run_eval.outputs.scored_file != ''
@@ -121,6 +128,7 @@ jobs:
       - name: Run quality gate (pytest)
         env:
           EVAL_GATE_FILE: ${{ steps.run_eval.outputs.scored_file }}
+          CODE_CHECKS_FILE: ${{ steps.run_eval.outputs.checks_file }}
         run: pytest tests/test_eval_gate.py -v
 
       - name: Upload scored results as artifact
@@ -128,7 +136,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: scored-eval-${{ github.run_id }}
-          path: ${{ steps.run_eval.outputs.scored_file }}
+          path: |
+            ${{ steps.run_eval.outputs.scored_file }}
+            ${{ steps.run_eval.outputs.checks_file }}
           retention-days: 30
 
       # Only on push-to-main runs that passed the gate: refresh last_main.json.

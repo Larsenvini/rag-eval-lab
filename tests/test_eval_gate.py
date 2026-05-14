@@ -219,10 +219,15 @@ def test_clean_answer_count_above_floor(scored, thresholds):
 def test_bimodal_question_count(scored, thresholds):
     """Number of bimodal questions must stay at or below the configured ceiling.
 
-    Skipped for legacy single-run files (no stability data available).
+    Skipped for legacy single-run files (no stability data available) and for
+    N=1 runs (no variance can be measured with one sample).
     """
     if not scored["__is_n_format"]:
         pytest.skip("Stability check requires N-run format (scored_n_*.json)")
+
+    n_runs = scored.get("n_runs", 1)
+    if n_runs < 2:
+        pytest.skip(f"Stability check requires N >= 2 (got N={n_runs})")
 
     stability_cfg = thresholds.get("stability", {})
     ceiling = stability_cfg.get("bimodal_max", {}).get("value")
@@ -311,3 +316,113 @@ def test_no_regression_vs_last_main(aggregates, thresholds):
             )
 
     assert not regressions, "\nRegression vs last main:\n" + "\n".join(regressions)
+
+
+def _failure_counts_from(data: dict) -> Counter:
+    """Failure counts for any data dict (current or last_main), format-aware."""
+    is_n = _is_n_format(data)
+    if is_n and "majority_failure_modes" in data:
+        return Counter(data["majority_failure_modes"])
+    return Counter(_failure_mode(r, is_n) for r in data.get("results", []))
+
+
+def test_no_failure_mode_drift_vs_last_main(scored, thresholds):
+    """Failure-mode counts must not drift more than the configured amounts
+    between consecutive main-branch runs.
+
+    Absolute floors catch catastrophic regressions; this catches *changes*
+    that absolute floors miss. Example: if `none` slowly drops from 8 to 4
+    across several PRs, each individual drop may stay above the absolute
+    floor while the trend is bad. This test catches that.
+    """
+    if not LAST_MAIN.exists():
+        pytest.skip("No evals/results/last_main.json yet. First run; nothing to compare.")
+
+    drift_cfg = thresholds.get("regression", {}).get("failure_mode_drift", {})
+    if not drift_cfg:
+        pytest.skip("No failure_mode_drift thresholds configured")
+
+    prev = json.loads(LAST_MAIN.read_text(encoding="utf-8"))
+    prev_counts = _failure_counts_from(prev)
+    cur_counts = _failure_counts_from(scored)
+
+    violations = []
+    for mode, rule in drift_cfg.items():
+        if mode.startswith("_"):
+            continue
+        prev_n = prev_counts.get(mode, 0)
+        cur_n = cur_counts.get(mode, 0)
+
+        max_increase = rule.get("max_increase")
+        max_decrease = rule.get("max_decrease")
+
+        if max_increase is not None:
+            growth = cur_n - prev_n
+            if growth > max_increase:
+                violations.append(
+                    f"  {mode}: {prev_n} -> {cur_n}  (+{growth}, max increase {max_increase})"
+                )
+        if max_decrease is not None:
+            shrink = prev_n - cur_n
+            if shrink > max_decrease:
+                violations.append(
+                    f"  {mode}: {prev_n} -> {cur_n}  (-{shrink}, max decrease {max_decrease})"
+                )
+
+    assert not violations, "\nFailure-mode drift vs last main:\n" + "\n".join(violations)
+
+
+# ─── Code-check gates ─────────────────────────────────────────────────────
+
+
+def _resolve_code_checks_file() -> Path | None:
+    """Pick the newest code_checks_*.json. Returns None if none exist."""
+    env = os.environ.get("CODE_CHECKS_FILE")
+    if env:
+        p = Path(env)
+        return p if p.exists() else None
+
+    candidates = sorted(
+        RESULTS_DIR.glob("code_checks_*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+
+@pytest.fixture(scope="module")
+def code_checks() -> dict | None:
+    path = _resolve_code_checks_file()
+    if path is None:
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize(
+    "field,threshold_key",
+    [
+        ("missing_citation",      "missing_citation_max"),
+        ("suspiciously_short",    "suspiciously_short_max"),
+        ("has_forbidden_patterns","forbidden_patterns_max"),
+    ],
+    ids=["missing_citation", "suspiciously_short", "forbidden_patterns"],
+)
+def test_code_check_threshold(field, threshold_key, code_checks, thresholds):
+    """Deterministic checks on RAG answers must stay within thresholds.
+
+    Skipped if no code_checks_*.json file exists yet — generate one with:
+        python -m scripts.code_checks evals/results/run_<ts>.json
+    """
+    if code_checks is None:
+        pytest.skip("No code_checks_*.json file found. Run `scripts.code_checks` to generate one.")
+
+    cfg = thresholds.get("code_checks", {})
+    if not cfg or threshold_key not in cfg:
+        pytest.skip(f"No code_checks.{threshold_key} threshold configured")
+
+    ceiling = cfg[threshold_key]["value"]
+    observed = code_checks.get(field, 0)
+    assert observed <= ceiling, (
+        f"\n  {field}: {observed}  exceeds ceiling {ceiling}.\n"
+        f"  Note: {cfg[threshold_key].get('note', '')}\n"
+    )
