@@ -20,10 +20,13 @@ from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from src.config import assert_ready, cfg
@@ -32,6 +35,8 @@ from src.retriever import Retriever
 
 
 API_VERSION = "0.2.0"
+
+_STATIC_DIR = Path(__file__).parent / "static"
 
 
 # ─── Singletons ──────────────────────────────────────────────────────────
@@ -65,6 +70,8 @@ app = FastAPI(
     ),
     lifespan=lifespan,
 )
+
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 # Permissive CORS — fine for portfolio demo. Tighten before any real prod use.
 app.add_middleware(
@@ -103,7 +110,7 @@ class Citation(BaseModel):
 
 class AskResponse(BaseModel):
     answer: str
-    citations: list[Citation]
+    contexts: list[Citation]
     latency_ms: int = Field(..., description="End-to-end time on the server.")
     config: dict[str, Any] = Field(
         ...,
@@ -143,18 +150,14 @@ def healthz() -> HealthResponse:
     )
 
 
-@app.get("/")
-def root() -> dict[str, Any]:
-    """Friendly index — for humans who hit the URL directly."""
-    return {
-        "service": "rag-eval-lab",
-        "version": API_VERSION,
-        "endpoints": {
-            "ask": "POST /ask  body: { question: str, top_k?: int }",
-            "health": "GET /healthz",
-            "interactive_docs": "GET /docs",
-        },
-    }
+@app.get("/", include_in_schema=False)
+async def root():
+    """Serve the chat UI."""
+    index = _STATIC_DIR / "index.html"
+    if not index.exists():
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/docs")
+    return FileResponse(index)
 
 
 @app.post("/ask", response_model=AskResponse)
@@ -175,7 +178,7 @@ def ask(req: AskRequest) -> AskResponse:
 
     return AskResponse(
         answer=answer.text,
-        citations=[
+        contexts=[
             Citation(
                 source=c.source,
                 section=c.section,

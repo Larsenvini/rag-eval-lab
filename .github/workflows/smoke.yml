@@ -1,0 +1,54 @@
+name: smoke
+
+# ─── When this runs ───────────────────────────────────────────────────────
+# - Daily at 12:00 UTC (09:00 BRT) to catch silent breakage
+# - Manually from the Actions tab when you want to verify after a deploy
+#
+# Why we don't gate this on PR/push:
+# - It hits OpenAI (each run costs ~$0.01–0.05)
+# - It depends on the live deploy being up — failure here doesn't mean
+#   the code is broken
+# - It would slow down PR feedback for no gain
+#
+# When it fails: GitHub will email you. That's the alert.
+
+on:
+  schedule:
+    - cron: "0 12 * * *"   # daily at noon UTC
+  workflow_dispatch:
+    inputs:
+      live_url:
+        description: "URL to smoke-test (default: prod)"
+        required: false
+        default: "https://rag-eval-lab.fly.dev"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install minimal deps for smoke tests
+        run: |
+          pip install --upgrade pip
+          pip install pytest requests
+
+      - name: Run smoke tests
+        env:
+          RUN_SMOKE: "1"
+          LIVE_URL: ${{ github.event.inputs.live_url || 'https://rag-eval-lab.fly.dev' }}
+        run: pytest tests/test_smoke_live.py -v
