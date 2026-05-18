@@ -17,10 +17,11 @@ data/raw/
 .DS_Store
 Thumbs.db
 
-# Eval outputs — keep only the locked baseline
+# Eval results — timestamped runs are ignored, but commit baselines
 evals/results/*.csv
 evals/results/*.json
 !evals/results/baseline.json
+!evals/results/last_main.json
 
 # Misc
 *.log
