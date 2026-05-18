@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local data + eval artifacts
+data/raw/
+data/processed/
+evals/results/run_*.json
+evals/results/scored_*.json
+evals/results/code_checks_*.json
+
+# Env + secrets
+.env
+.env.*
+*.key
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# CI artifacts
+.github/
+eval_summary.md
+
+# Tests (not needed in the runtime image)
+tests/
+
+# Docs / portfolio assets
+README.md
+*.md
