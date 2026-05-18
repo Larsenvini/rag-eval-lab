@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rag Eval Lab by Larsenvini</title>
+  <meta name="description" content="A RAG system over the Kubernetes documentation, with a CI quality gate that runs on every commit. Try it live." />
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="alternate icon" type="image/png" href="/static/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg:          #0d1424;
+      --bg-panel:    #131c30;
+      --bg-elev:     #1a2540;
+      --border:      #1f2a44;
+      --border-soft: #18223a;
+
+      --text:        #ffffff;
+      --text-mute:   #a4b1c4;
+      --text-dim:    #6b7891;
+
+      --k8s-blue:    #326ce5;
+      --k8s-blue-fade: rgba(50, 108, 229, 0.12);
+      --k8s-blue-border: rgba(50, 108, 229, 0.35);
+
+      --error:       #f87171;
+
+      --mono: 'JetBrains Mono', ui-monospace, monospace;
+      --sans: 'Inter', -apple-system, system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    .wrap {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 80px 24px 120px;
+    }
+
+    /* ─── Header ──────────────────────────────────────────────── */
+    header { margin-bottom: 56px; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-mute);
+      margin-bottom: 24px;
+    }
+    .badge .dot {
+      width: 6px; height: 6px;
+      background: var(--k8s-blue);
+      border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    h1 {
+      font-size: 38px;
+      font-weight: 600;
+      margin: 0 0 16px;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+    }
+    h1 .k8s { color: var(--k8s-blue); }
+    .tagline {
+      color: var(--text-mute);
+      font-size: 16px;
+      margin: 0;
+      max-width: 560px;
+    }
+    .tagline a {
+      color: var(--text);
+      text-decoration: none;
+      border-bottom: 1px solid var(--border);
+      transition: border-color 0.15s;
+    }
+    .tagline a:hover { border-color: var(--text); }
+
+    /* ─── Input ───────────────────────────────────────────────── */
+    .input-wrap {
+      position: relative;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      transition: border-color 0.15s;
+      margin-bottom: 16px;
+    }
+    .input-wrap:focus-within { border-color: var(--text-dim); }
+    #question {
+      width: 100%;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 15px;
+      padding: 18px 64px 18px 18px;
+      outline: none;
+      resize: none;
+      min-height: 60px;
+      max-height: 240px;
+      line-height: 1.55;
+    }
+    #question::placeholder { color: var(--text-dim); }
+
+    #ask-btn {
+      position: absolute;
+      right: 10px;
+      bottom: 10px;
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      background: var(--text);
+      color: var(--bg);
+      border: none;
+      cursor: pointer;
+      font-size: 18px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.1s;
+    }
+    #ask-btn:hover:not(:disabled) { transform: translateY(-1px); }
+    #ask-btn:active:not(:disabled) { transform: translateY(0); }
+    #ask-btn:disabled {
+      background: var(--border);
+      color: var(--text-dim);
+      cursor: not-allowed;
+    }
+
+    /* ─── Suggestions ─────────────────────────────────────────── */
+    .suggestions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 48px;
+    }
+    .suggestion-chip {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-mute);
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-family: var(--sans);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .suggestion-chip:hover {
+      border-color: var(--text-mute);
+      color: var(--text);
+    }
+
+    /* ─── Answer ──────────────────────────────────────────────── */
+    .answer-wrap {
+      display: none;
+      animation: slideUp 0.35s ease;
+    }
+    .answer-wrap.visible { display: block; }
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .answer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      gap: 16px;
+    }
+    .answer-label {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .answer-meta {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .answer {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 22px 24px;
+      font-size: 15px;
+      line-height: 1.75;
+      color: var(--text);
+      white-space: pre-wrap;
+      margin-bottom: 20px;
+    }
+    .answer-loading { color: var(--text-mute); }
+    .answer-loading::after {
+      content: "▍";
+      color: var(--k8s-blue);
+      animation: blink 0.9s infinite;
+      margin-left: 2px;
+    }
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0; }
+    }
+
+    .answer .cite {
+      display: inline-block;
+      background: var(--k8s-blue-fade);
+      color: var(--k8s-blue);
+      border: 1px solid var(--k8s-blue-border);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 4px;
+      margin: 0 2px;
+      vertical-align: 1px;
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    .answer .cite:hover {
+      background: var(--k8s-blue);
+      color: #fff;
+    }
+
+    /* ─── Sources ─────────────────────────────────────────────── */
+    .sources-label {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 10px;
+    }
+    .source {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-soft);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: var(--text-mute);
+      transition: border-color 0.2s;
+    }
+    .source.highlight { border-color: var(--k8s-blue); }
+    .source-head {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .source-num {
+      font-family: var(--mono);
+      font-weight: 600;
+      color: var(--k8s-blue);
+      font-size: 12px;
+    }
+    .source-path {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text);
+    }
+    .source-section {
+      color: var(--text-dim);
+      font-size: 12px;
+    }
+    .source-text {
+      margin-top: 8px;
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.55;
+      max-height: 76px;
+      overflow: hidden;
+      position: relative;
+    }
+    .source-text::after {
+      content: "";
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 24px;
+      background: linear-gradient(transparent, var(--bg-panel));
+    }
+
+    /* ─── Footer ──────────────────────────────────────────────── */
+    .footer {
+      margin-top: 96px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    .footer a {
+      color: var(--text-mute);
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+    .footer a:hover { color: var(--text); }
+    .footer-meta {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .footer-meta span::before {
+      content: "";
+      display: inline-block;
+      width: 4px; height: 4px;
+      background: var(--text-dim);
+      border-radius: 50%;
+      margin-right: 8px;
+      vertical-align: 2px;
+    }
+
+    .error {
+      background: rgba(248, 113, 113, 0.08);
+      border: 1px solid rgba(248, 113, 113, 0.3);
+      color: var(--error);
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+
+    @media (max-width: 600px) {
+      .wrap { padding: 48px 16px 80px; }
+      h1 { font-size: 28px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="badge"><span class="dot"></span>LIVE</div>
+      <h1>Ask the <span class="k8s">Kubernetes</span> docs.</h1>
+      <p class="tagline">
+        Retrieval-augmented search over the official documentation, with answers cited back to source. Engineers — full API at <a href="/docs">/docs</a> · code on <a href="https://github.com/Larsenvini/rag-eval-lab" target="_blank" rel="noopener">GitHub</a>.
+      </p>
+    </header>
+
+    <div class="input-wrap">
+      <textarea
+        id="question"
+        placeholder="What do you want to know?"
+        rows="1"
+      ></textarea>
+      <button id="ask-btn" title="Ask (Enter)">→</button>
+    </div>
+
+    <div class="suggestions">
+      <button class="suggestion-chip" data-q="How does a Pod differ from a container?">How does a Pod differ from a container?</button>
+      <button class="suggestion-chip" data-q="When should I use a StatefulSet instead of a Deployment?">StatefulSet vs Deployment?</button>
+      <button class="suggestion-chip" data-q="What's the difference between a ConfigMap and a Secret?">ConfigMap vs Secret?</button>
+      <button class="suggestion-chip" data-q="How does horizontal pod autoscaling work?">How does HPA work?</button>
+    </div>
+
+    <section class="answer-wrap" id="answer-wrap">
+      <div class="answer-header">
+        <div class="answer-label">Answer</div>
+        <div class="answer-meta" id="answer-meta"></div>
+      </div>
+      <div class="answer" id="answer"></div>
+      <div class="sources" id="sources"></div>
+    </section>
+
+    <footer class="footer">
+      <div>Built by <a href="https://vinicius-larsen.com" target="_blank" rel="noopener">Vinicius Larsen</a></div>
+      <div class="footer-meta">
+        <span id="meta-retriever">retriever: hybrid</span>
+        <span id="meta-model">model: …</span>
+        <span id="meta-chunks">chunks: …</span>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    const $question    = document.getElementById('question');
+    const $askBtn      = document.getElementById('ask-btn');
+    const $answerWrap  = document.getElementById('answer-wrap');
+    const $answer      = document.getElementById('answer');
+    const $answerMeta  = document.getElementById('answer-meta');
+    const $sources     = document.getElementById('sources');
+
+    (async function loadMeta() {
+      try {
+        const r = await fetch('/healthz');
+        if (!r.ok) return;
+        const j = await r.json();
+        document.getElementById('meta-model').textContent = `model: ${j.generation_model || 'unknown'}`;
+        document.getElementById('meta-chunks').textContent = `chunks: ${j.chunks_indexed?.toLocaleString() ?? '?'}`;
+      } catch (e) { /* silent */ }
+    })();
+
+    $question.addEventListener('input', () => {
+      $question.style.height = 'auto';
+      $question.style.height = Math.min($question.scrollHeight, 240) + 'px';
+    });
+
+    $question.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        ask();
+      }
+    });
+
+    $askBtn.addEventListener('click', ask);
+
+    document.querySelectorAll('.suggestion-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        $question.value = chip.dataset.q;
+        $question.dispatchEvent(new Event('input'));
+        ask();
+      });
+    });
+
+    function highlightSource(num) {
+      document.querySelectorAll('.source').forEach(s => s.classList.remove('highlight'));
+      const target = document.getElementById(`source-${num}`);
+      if (target) {
+        target.classList.add('highlight');
+        target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        setTimeout(() => target.classList.remove('highlight'), 2200);
+      }
+    }
+
+    function renderAnswerWithCitations(text) {
+      const html = escapeHtml(text).replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g, (m, nums) => {
+        return nums.split(',').map(s => s.trim())
+          .map(n => `<span class="cite" data-source="${n}">[${n}]</span>`)
+          .join('');
+      });
+      $answer.innerHTML = html;
+      $answer.querySelectorAll('.cite').forEach(c => {
+        c.addEventListener('click', () => highlightSource(c.dataset.source));
+      });
+    }
+
+    function renderSources(contexts) {
+      if (!contexts?.length) { $sources.innerHTML = ''; return; }
+      $sources.innerHTML = [
+        '<div class="sources-label">Retrieved sources</div>',
+        ...contexts.map((c, i) => `
+          <div class="source" id="source-${i + 1}">
+            <div class="source-head">
+              <span class="source-num">[${i + 1}]</span>
+              <span class="source-path">${escapeHtml(c.source || 'unknown')}</span>
+              ${c.section ? `<span class="source-section">› ${escapeHtml(c.section)}</span>` : ''}
+            </div>
+            <div class="source-text">${escapeHtml((c.text || '').slice(0, 280))}…</div>
+          </div>
+        `)
+      ].join('');
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async function ask() {
+      const q = $question.value.trim();
+      if (!q) return;
+
+      $askBtn.disabled = true;
+      $answerWrap.classList.add('visible');
+      $sources.innerHTML = '';
+      $answer.innerHTML = '<span class="answer-loading">Searching the docs</span>';
+      $answerMeta.textContent = '';
+
+      const t0 = performance.now();
+      try {
+        const resp = await fetch('/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: q })
+        });
+
+        if (!resp.ok) {
+          const err = await resp.text();
+          $answer.innerHTML = `<div class="error">Error ${resp.status}: ${escapeHtml(err.slice(0, 300))}</div>`;
+          return;
+        }
+
+        const data = await resp.json();
+        const ms = Math.round(performance.now() - t0);
+
+        renderAnswerWithCitations(data.answer || '(no answer)');
+        renderSources(data.contexts || []);
+
+        const numSources = (data.contexts || []).length;
+        $answerMeta.textContent = `${(ms / 1000).toFixed(1)}s · ${numSources} sources`;
+      } catch (e) {
+        $answer.innerHTML = `<div class="error">Network error: ${escapeHtml(e.message)}</div>`;
+      } finally {
+        $askBtn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
