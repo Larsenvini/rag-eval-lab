@@ -40,7 +40,7 @@ Question
 │  Hybrid Retriever               │
 │  BM25 + text-embedding-3-small  │
 │  RRF fusion · top_k=12          │
-│  3,769 chunks · K8s docs        │
+│  3,770 chunks · K8s docs        │
 └────────────────┬────────────────┘
                  │ top-k chunks
                  ▼
