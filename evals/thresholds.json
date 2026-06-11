@@ -39,8 +39,8 @@
   "stability": {
     "_note": "Stability checks apply only to N-run (scored_n_*.json) eval files. Each question is classified across N runs as 'stable' (std <= 0.10), 'mild-variance' (0.10 < std <= 0.25), or 'bimodal' (std > 0.25). The build fails if too many questions become bimodal — that signals systemic judge instability or a corpus/prompt change that's destabilizing answers.",
     "bimodal_max": {
-      "value": 4,
-      "note": "Working assumption: ~1-3 bimodal questions across the 41-question set is normal LLM-as-judge noise. Ceiling of 4 catches a clear shift. Tighten as we accumulate more N-run history."
+      "value": 10,
+      "note": "Calibrated on two N=3 main-push runs: observed counts were 0 and 8. Range {0-8} means ceiling of 10 catches a meaningful shift without flaking on normal judge variance. Tighten once 5+ N=3 runs establish a steady-state distribution."
     }
   },
 
