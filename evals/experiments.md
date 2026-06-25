@@ -82,8 +82,7 @@ the metrics that matter most. Three angles:
   0.86/0.84. That's not noise; it's roughly two questions' worth of difference on
   a 41-question set.
 - **Retrieval-miss reduction:** BGE-large wins, 3 vs 6. That's its job and it does it.
-- **Clean wins (none):** tied at 11. *(Flagged: the ablation table above lists E2
-  at none = 8 — reconcile this count before publishing.)*
+- **Clean wins (none):** BGE-large edges it, 11 vs 8.
 - **GT-similarity:** BGE-large barely edges it out (0.722 vs 0.717). Within judge noise.
 
 **Why E2 beats BGE-large on the aggregate.** Look at what BGE-large does to
@@ -97,10 +96,12 @@ Q01 (architecture / how):  answer-incomplete → synthesis-fail   (−0.20)
 Q30 (storage / edge):                                           (−0.10 / −0.30)
 ```
 
-The reranker is trading wins for losses. It rescues 3 retrieval-miss canaries but
-bumps 5 questions out of cleaner buckets. Net effect: same retrieval health,
-slightly worse synthesis. This is the exact pattern we predicted — reranking
-shuffles, and shuffling isn't always improvement.
+The reranker trades judged quality for retrieval coverage: it cuts retrieval-miss
+(6 → 3) and lifts clean answers (8 → 11), but faithfulness and relevance — the
+metrics we weight most — both drop (0.878 → 0.856, 0.851 → 0.837) and
+synthesis-fails rise (9 → 13). That's why plain hybrid still wins on the metrics
+that matter, before you even count reranking's latency. Reranking shuffles, and
+shuffling isn't always improvement.
 
 **The story that's emerging:**
 
