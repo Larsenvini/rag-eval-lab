@@ -94,6 +94,7 @@ The gate runs via GitHub Actions and posts results as a PR comment.
 ✓ test_retrieval_miss_count_below_ceiling
 ✓ test_clean_answer_count_above_floor
 ✓ test_bimodal_question_count
+✓ test_canary_question[Q06]
 ✓ test_canary_question[Q20]
 ✓ test_canary_question[Q25]
 ✓ test_no_regression_vs_last_main
@@ -128,7 +129,7 @@ pip install -r requirements.txt
 # Set your OpenAI key
 export OPENAI_API_KEY=sk-...    # Windows: $env:OPENAI_API_KEY = "sk-..."
 
-# Download and embed the corpus (~3,800 chunks, costs ~$0.05)
+# Download and embed the corpus (~3,770 chunks, costs ~$0.05)
 python -m scripts.download_corpus
 python -m scripts.ingest
 
